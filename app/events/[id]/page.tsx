@@ -50,10 +50,11 @@ export default function EventPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   
-  // 自分の入力用
+  // 入力フォーム用ステート
   const [name, setName] = useState("");
   const [comment, setComment] = useState("");
   const [myAnswers, setMyAnswers] = useState<{ [key: number]: string }>({});
+  const [editingId, setEditingId] = useState<string | null>(null); // 現在編集中のID
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // チャット用
@@ -88,10 +89,10 @@ export default function EventPage() {
     }
     setBrowserId(myId);
 
-    // 名前復元
+    // 名前復元（チャット用）
     const savedName = localStorage.getItem("chousei_user_name");
     if (savedName) {
-      if (!name) setName(savedName);
+      if (!name && !editingId) setName(savedName); // 新規モードなら名前を入れる
       setChatName(savedName);
     }
 
@@ -126,21 +127,36 @@ export default function EventPage() {
     return () => { unsubEvent(); unsubParticipants(); unsubMessages(); };
   }, [id]);
 
-  // 自分のデータをフォームに反映
+  // ★ 自分のデータが見つかったら、自動で編集モードにする（初回のみ）
+  // ただし、明示的にクリアされた場合は動作しない
   useEffect(() => {
-    if (!browserId || participants.length === 0) return;
+    if (!browserId || participants.length === 0 || editingId) return;
+    
     const myExistingEntry = participants.find(p => p.browserId === browserId);
     if (myExistingEntry) {
-      setName(myExistingEntry.name);
-      setComment(myExistingEntry.comment);
-      setMyAnswers(myExistingEntry.answers);
-      if(!chatName) setChatName(myExistingEntry.name);
+      loadParticipantToForm(myExistingEntry);
     }
   }, [browserId, participants.length]);
 
   // --- ロジック ---
 
-  const myEntryId = participants.find(p => p.browserId === browserId)?.id;
+  // フォームにデータをセットする関数（名前クリック時などに使用）
+  const loadParticipantToForm = (p: Participant) => {
+    setName(p.name);
+    setComment(p.comment);
+    setMyAnswers(p.answers);
+    setEditingId(p.id);
+    // チャット名も同期
+    if(!chatName) setChatName(p.name);
+  };
+
+  // フォームをリセットする関数（新規登録に戻す）
+  const clearForm = () => {
+    setName("");
+    setComment("");
+    setMyAnswers({});
+    setEditingId(null);
+  };
 
   const bestIds = (() => {
     if (!event || participants.length === 0) return [];
@@ -169,28 +185,27 @@ export default function EventPage() {
     setMyAnswers(newAnswers); 
   };
 
-  // ★ 表を直接クリックした時の処理（即時保存）
+  // ★ 表を直接クリックした時の処理（誰でも修正可能に変更）
   const toggleTableAnswer = async (participantId: string, candidateId: number, currentVal: string) => {
-    // 自分の行以外は操作させない
-    if (participantId !== myEntryId) return;
+    // 誰でもクリック可能にするため、IDチェックを削除しました
 
-    // 次の値へローテーション: o -> t -> x -> o
     let nextVal = "o";
     if (currentVal === "o") nextVal = "t";
     else if (currentVal === "t") nextVal = "x";
     else if (currentVal === "x") nextVal = "o";
 
-    // 1. 画面上の見た目を即座に更新 (ローカルstate)
-    const newAnswers = { ...myAnswers, [candidateId]: nextVal };
-    setMyAnswers(newAnswers);
+    // もし編集中のユーザーなら、フォーム側のstateも更新してあげる（同期）
+    if (editingId === participantId) {
+       setMyAnswers(prev => ({ ...prev, [candidateId]: nextVal }));
+    }
 
-    // 2. データベースを即座に更新
     try {
+      // データベースを即座に更新
       await updateDoc(doc(db, "events", id, "participants", participantId), {
-        answers: newAnswers
+        [`answers.${candidateId}`]: nextVal // 特定のフィールドだけ更新
       });
     } catch (e) {
-      alert("更新に失敗しました。通信環境を確認してください。");
+      alert("更新エラー: 通信環境を確認してください");
     }
   };
 
@@ -225,25 +240,39 @@ export default function EventPage() {
     } catch (e) { alert("更新失敗"); } 
   };
 
+  // ★ 参加登録・更新ロジック
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
     if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
     
     setIsSubmitting(true);
     try {
-      if (myEntryId) {
-        await updateDoc(doc(db, "events", id, "participants", myEntryId), {
-          name, comment, answers: myAnswers
+      if (editingId) {
+        // --- 既存データの更新 ---
+        await updateDoc(doc(db, "events", id, "participants", editingId), {
+          name,
+          comment,
+          answers: myAnswers,
+          // browserId は更新しない（他人が編集しても、元の持ち主のIDを維持する）
         });
-        alert("回答を修正しました！表を直接クリックしても修正できます。");
+        alert(`「${name}」さんの回答を修正しました！`);
       } else {
-        await addDoc(collection(db, "events", id, "participants"), { 
-          name, comment, answers: myAnswers, hasPaid: false, browserId: browserId, created_at: serverTimestamp(), 
+        // --- 新規登録 ---
+        const newDocRef = await addDoc(collection(db, "events", id, "participants"), { 
+          name, 
+          comment, 
+          answers: myAnswers, 
+          hasPaid: false, 
+          browserId: browserId, // 作成者の端末IDを保存
+          created_at: serverTimestamp(), 
         });
+        setEditingId(newDocRef.id); // 登録後はその人の編集モードにする
         alert("登録しました！");
       }
+      
       localStorage.setItem("chousei_user_name", name);
       setChatName(name);
+
     } catch (e: any) { 
       console.error(e);
       alert("送信エラー: " + e.message); 
@@ -256,6 +285,7 @@ export default function EventPage() {
     if (!chatText) return;
     const sender = chatName || name;
     if (!sender) return alert("名前を入力してください");
+
     try { 
       await addDoc(collection(db, "events", id, "messages"), { 
         text: chatText, senderName: sender, senderId: browserId, createdAt: serverTimestamp() 
@@ -323,7 +353,7 @@ export default function EventPage() {
               </div>
             )}
 
-            {/* 出欠テーブル (クリック編集機能付き) */}
+            {/* 出欠テーブル */}
             <div className="overflow-x-auto border border-white bg-[#0A0A0A]">
               <table className="w-full border-collapse text-sm whitespace-nowrap">
                 <thead>
@@ -349,15 +379,23 @@ export default function EventPage() {
                 </thead>
                 <tbody>
                   {participants.map((p) => {
-                    const isMyRow = p.browserId === browserId;
+                    const isMyDevice = p.browserId === browserId;
+                    const isEditing = p.id === editingId;
                     return (
-                      <tr key={p.id} className={`border-b border-white transition group ${isMyRow ? "bg-cyan-900/10" : "hover:bg-[#161616]"}`}>
-                        <td className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px]">
+                      <tr key={p.id} className={`border-b border-white transition group ${isEditing ? "bg-cyan-900/20" : "hover:bg-[#161616]"}`}>
+                        <td 
+                          onClick={() => loadParticipantToForm(p)} 
+                          className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px] cursor-pointer hover:text-cyan-400 transition"
+                          title="クリックしてこのユーザーを編集"
+                        >
                           <div className="flex items-center justify-between gap-2">
-                            <span className={isMyRow ? "text-cyan-400" : ""}>{p.name} {isMyRow && "(YOU)"}</span>
+                            <div className="flex items-center gap-1">
+                                {isEditing && <span className="text-cyan-500">▶</span>}
+                                <span>{p.name} {isMyDevice && <span className="text-[10px] text-slate-500 ml-1">(YOU)</span>}</span>
+                            </div>
                             {isEditMode && (
                               <button 
-                                onClick={() => togglePayment(p.id, p.hasPaid)}
+                                onClick={(e) => { e.stopPropagation(); togglePayment(p.id, p.hasPaid); }}
                                 className={`text-[10px] px-2 py-0.5 border ${p.hasPaid ? "bg-cyan-900 text-cyan-300 border-cyan-500" : "bg-[#222] text-slate-500 border-slate-700"}`}
                               >
                                 {p.hasPaid ? "¥ PAID" : "¥ UNPAID"}
@@ -367,17 +405,14 @@ export default function EventPage() {
                         </td>
                         {event.candidates.map((c) => {
                           const isBest = bestIds.includes(c.id);
-                          // ★ 自分の行ならクリックできるようにする
                           return (
                             <td 
                               key={c.id} 
                               onClick={() => toggleTableAnswer(p.id, c.id, p.answers[c.id])}
                               className={`
-                                p-2 text-center border-l border-white transition select-none
+                                p-2 text-center border-l border-white transition select-none cursor-pointer hover:bg-cyan-500/20 active:scale-90
                                 ${isBest && !isEditMode ? "bg-cyan-900/10" : ""}
-                                ${isMyRow ? "cursor-pointer hover:bg-cyan-500/20 active:scale-90" : ""}
                               `}
-                              title={isMyRow ? "クリックして変更 (◎→△→✕)" : ""}
                             >
                               {renderSymbol(p.answers[c.id])}
                             </td>
@@ -392,23 +427,28 @@ export default function EventPage() {
               {participants.length === 0 && <div className="p-12 text-center text-slate-600 font-mono text-xs tracking-widest uppercase">No participants yet / まだ参加者がいません</div>}
             </div>
             {/* 使い方のヒント */}
-            {myEntryId && (
-              <p className="text-cyan-500 text-xs font-bold text-right animate-pulse">
-                TIP: 表の中の自分の ◎△✕ をクリックすると直接変更できます
-              </p>
-            )}
+             <p className="text-slate-500 text-xs font-bold text-right">
+                TIP: 名前をクリックすると誰でも修正できます（性善説モード）
+             </p>
           </div>
 
           {/* 右サイドバー (入力 & チャット) */}
           <div className="lg:col-span-4 space-y-10">
             
             {/* 入力フォーム */}
-            <div className={`bg-[#111] p-8 border hover:border-cyan-500 transition duration-300 ${myEntryId ? "border-cyan-600 shadow-[0_0_15px_rgba(8,145,178,0.1)]" : "border-white"}`}>
-              <h2 className={`font-black text-xl mb-1 uppercase tracking-wider ${myEntryId ? "text-cyan-400" : "text-white"}`}>
-                {myEntryId ? "Your Entry (Registered)" : "New Entry"}
-              </h2>
+            <div className={`bg-[#111] p-8 border hover:border-cyan-500 transition duration-300 ${editingId ? "border-cyan-600 shadow-[0_0_15px_rgba(8,145,178,0.1)]" : "border-white"}`}>
+              <div className="flex justify-between items-start mb-1">
+                  <h2 className={`font-black text-xl uppercase tracking-wider ${editingId ? "text-cyan-400" : "text-white"}`}>
+                    {editingId ? "Editing Entry" : "New Entry"}
+                  </h2>
+                  {editingId && (
+                      <button onClick={clearForm} className="text-[10px] text-slate-500 border border-slate-700 px-2 py-1 hover:bg-[#222]">
+                          CLEAR / 新規作成
+                      </button>
+                  )}
+              </div>
               <p className="text-slate-500 text-xs mb-6 font-bold">
-                {myEntryId ? "表をクリックで簡単修正できます" : "出欠を入力してください"}
+                {editingId ? "選択したユーザーを編集中" : "出欠を入力してください"}
               </p>
               
               <div className="space-y-6">
@@ -445,7 +485,7 @@ export default function EventPage() {
                 </div>
                 
                 <button onClick={submitAnswer} disabled={isSubmitting} className="w-full bg-cyan-600 text-black font-black text-lg py-5 hover:bg-cyan-500 transition shadow-[0_0_20px_rgba(8,145,178,0.2)] disabled:opacity-50 tracking-widest uppercase border border-white">
-                  {myEntryId ? "UPDATE ENTRY" : "SUBMIT ENTRY"}
+                  {editingId ? "UPDATE ENTRY" : "SUBMIT ENTRY"}
                 </button>
               </div>
             </div>
