@@ -8,13 +8,10 @@ import { useRouter } from "next/navigation";
 export default function Home() {
   const router = useRouter();
 
-  // --- ステート管理 ---
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [candidates, setCandidates] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // 日付と時間の入力用
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("19:00");
 
@@ -25,7 +22,6 @@ export default function Home() {
     timeOptions.push(`${hour}:30`);
   }
 
-  // --- 候補日を追加 ---
   const addCandidate = () => {
     if (!selectedDate) return;
     const dateObj = new Date(selectedDate);
@@ -37,7 +33,6 @@ export default function Home() {
     }
   };
 
-  // --- 作成処理 ---
   const createEvent = async () => {
     if (!title) { alert("イベント名を入力してください"); return; }
     if (candidates.length === 0) { alert("候補日を少なくとも1つ追加してください"); return; }
@@ -47,7 +42,7 @@ export default function Home() {
         title: title,
         detail: detail,
         candidates: candidates.map((c, i) => ({ id: i, label: c })),
-        fee: "", // 会費初期値
+        fee: "",
         created_at: serverTimestamp(),
       });
       router.push(`/events/${docRef.id}`);
@@ -59,119 +54,120 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 font-sans text-gray-800">
-      <main className="max-w-2xl mx-auto bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden p-8">
+    <div className="min-h-screen bg-[#0F172A] text-white font-sans selection:bg-cyan-500 selection:text-black">
+      <main className="max-w-2xl mx-auto py-12 px-6">
         
-        {/* ヘッダー＆ガイドエリア */}
-        <div className="text-center mb-10">
-          <h1 className="text-3xl font-extrabold text-indigo-700 tracking-tight mb-2">
-            Smart Scheduler
+        {/* ヘッダー */}
+        <div className="text-center mb-12">
+          <h1 className="text-5xl font-black tracking-tighter mb-4 text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 drop-shadow-lg">
+            SMART<br/>SCHEDULER
           </h1>
-          <p className="text-sm text-gray-500 mb-8">
-            ログイン不要。URLを送るだけの最もシンプルな調整ツール。
+          <p className="text-slate-400 font-bold tracking-wider text-sm">
+            URLを送るだけ。最強にシンプルな調整ツール。
           </p>
+        </div>
 
-          {/* おしゃれな3ステップガイド */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left bg-indigo-50/50 rounded-xl p-5 border border-indigo-100">
-            <div className="flex flex-col items-center text-center">
-              <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold mb-2 shadow-sm">1</div>
-              <h3 className="font-bold text-sm text-indigo-900">イベントを作る</h3>
-              <p className="text-xs text-gray-500 mt-1">名前と候補日を入力して<br/>ページを作成します</p>
-            </div>
-            <div className="flex flex-col items-center text-center relative">
-              {/* 矢印 (PCのみ表示) */}
-              <div className="hidden md:block absolute top-3 -left-1/2 w-full h-[1px] bg-indigo-200 -z-10"></div>
-              <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold mb-2 shadow-sm z-10">2</div>
-              <h3 className="font-bold text-sm text-indigo-900">URLをシェア</h3>
-              <p className="text-xs text-gray-500 mt-1">発行されたURLをLINE等で<br/>メンバーに送ります</p>
-            </div>
-            <div className="flex flex-col items-center text-center">
-              <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold mb-2 shadow-sm">3</div>
-              <h3 className="font-bold text-sm text-indigo-900">自動で集計</h3>
-              <p className="text-xs text-gray-500 mt-1">みんなが回答すると<br/>◯の数やベスト日が分かります</p>
-            </div>
+        {/* 3ステップガイド (カードスタイル) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
+          <div className="bg-[#1E293B] p-6 rounded-none border-l-4 border-cyan-400">
+            <div className="text-cyan-400 font-black text-4xl mb-2 opacity-50">01</div>
+            <h3 className="font-bold text-lg mb-1">イベント作成</h3>
+            <p className="text-xs text-slate-400">タイトルと候補日を決める</p>
+          </div>
+          <div className="bg-[#1E293B] p-6 rounded-none border-l-4 border-pink-500">
+            <div className="text-pink-500 font-black text-4xl mb-2 opacity-50">02</div>
+            <h3 className="font-bold text-lg mb-1">URLをシェア</h3>
+            <p className="text-xs text-slate-400">LINE等でメンバーに送る</p>
+          </div>
+          <div className="bg-[#1E293B] p-6 rounded-none border-l-4 border-orange-400">
+            <div className="text-orange-400 font-black text-4xl mb-2 opacity-50">03</div>
+            <h3 className="font-bold text-lg mb-1">自動集計</h3>
+            <p className="text-xs text-slate-400">◯✕がリアルタイムに揃う</p>
           </div>
         </div>
 
-        {/* 入力フォーム */}
-        <div className="mb-6">
-          <label className="block text-sm font-bold text-gray-700 mb-2">イベント名 <span className="text-red-500">*</span></label>
-          <input
-            type="text"
-            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-gray-50 focus:bg-white"
-            placeholder="例：Q3 定例ミーティング、忘年会"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </div>
-
-        <div className="mb-6">
-          <label className="block text-sm font-bold text-gray-700 mb-2">詳細・メモ</label>
-          <textarea
-            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-gray-50 focus:bg-white"
-            rows={3}
-            placeholder="場所やZoomのURLなど"
-            value={detail}
-            onChange={(e) => setDetail(e.target.value)}
-          />
-        </div>
-
-        <div className="mb-8 bg-gray-50 p-6 rounded-xl border border-gray-200">
-          <label className="block text-sm font-bold text-gray-700 mb-4">候補日程を追加</label>
+        {/* メインフォーム */}
+        <div className="bg-[#1E293B] p-8 rounded-2xl shadow-2xl border border-slate-700">
           
-          <div className="flex flex-col sm:flex-row gap-4 mb-4">
+          <div className="mb-8">
+            <label className="block text-cyan-400 font-bold mb-2 text-sm uppercase tracking-wider">Event Name</label>
             <input
-              type="date"
-              className="flex-1 border border-gray-300 rounded-lg p-2.5 focus:ring-indigo-500 outline-none"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
+              type="text"
+              className="w-full bg-[#0F172A] border-2 border-slate-700 rounded-xl p-4 text-lg focus:border-cyan-400 focus:ring-0 outline-none transition placeholder-slate-600"
+              placeholder="イベント名を入力..."
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
             />
-            <select
-              className="w-32 border border-gray-300 rounded-lg p-2.5 focus:ring-indigo-500 outline-none bg-white"
-              value={selectedTime}
-              onChange={(e) => setSelectedTime(e.target.value)}
-            >
-              {timeOptions.map((time) => (
-                <option key={time} value={time}>{time}〜</option>
-              ))}
-            </select>
-            <button
-              onClick={addCandidate}
-              disabled={!selectedDate}
-              className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg hover:bg-indigo-700 font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition shadow-sm"
-            >
-              追加
-            </button>
           </div>
 
-          {candidates.length > 0 ? (
-            <ul className="space-y-2">
-              {candidates.map((c, index) => (
-                <li key={index} className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border border-gray-100">
-                  <span className="font-medium text-gray-700">{c}</span>
-                  <button
-                    onClick={() => setCandidates(candidates.filter((_, i) => i !== index))}
-                    className="text-gray-400 hover:text-red-500 text-sm font-bold transition"
-                  >
-                    削除
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-gray-400 text-center py-4 bg-white rounded-lg border border-dashed border-gray-300">
-              候補日がまだありません。<br/>上のフォームから追加してください。
-            </p>
-          )}
-        </div>
+          <div className="mb-8">
+            <label className="block text-cyan-400 font-bold mb-2 text-sm uppercase tracking-wider">Detail</label>
+            <textarea
+              className="w-full bg-[#0F172A] border-2 border-slate-700 rounded-xl p-4 text-base focus:border-cyan-400 focus:ring-0 outline-none transition placeholder-slate-600"
+              rows={3}
+              placeholder="詳細メモ（任意）..."
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
+            />
+          </div>
 
-        <button
-          onClick={createEvent}
-          disabled={isSubmitting}
-          className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 shadow-lg hover:shadow-xl transition disabled:bg-gray-400 disabled:shadow-none transform hover:-translate-y-0.5"
-        >
-          {isSubmitting ? "イベントを作成中..." : "イベントを作成する"}
-        </button>
+          <div className="mb-8">
+            <label className="block text-cyan-400 font-bold mb-4 text-sm uppercase tracking-wider">Candidates</label>
+            
+            <div className="flex flex-col sm:flex-row gap-3 mb-4">
+              <input
+                type="date"
+                className="flex-1 bg-[#334155] text-white rounded-lg p-3 outline-none cursor-pointer" // カレンダーアイコンが見えにくいブラウザ対策で背景色調整
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+              />
+              <select
+                className="w-full sm:w-32 bg-[#334155] text-white rounded-lg p-3 outline-none"
+                value={selectedTime}
+                onChange={(e) => setSelectedTime(e.target.value)}
+              >
+                {timeOptions.map((time) => (
+                  <option key={time} value={time}>{time}〜</option>
+                ))}
+              </select>
+              <button
+                onClick={addCandidate}
+                disabled={!selectedDate}
+                className="bg-cyan-500 text-black font-black px-6 py-3 rounded-lg hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500 transition active:scale-95"
+              >
+                追加
+              </button>
+            </div>
+
+            {candidates.length > 0 ? (
+              <ul className="space-y-2">
+                {candidates.map((c, index) => (
+                  <li key={index} className="flex justify-between items-center bg-[#0F172A] p-3 rounded-lg border border-slate-700">
+                    <span className="font-bold font-mono">{c}</span>
+                    <button
+                      onClick={() => setCandidates(candidates.filter((_, i) => i !== index))}
+                      className="text-slate-500 hover:text-pink-500 font-bold text-sm px-2"
+                    >
+                      DELETE
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-center py-6 border-2 border-dashed border-slate-700 rounded-xl text-slate-500 text-sm">
+                日程を追加してください
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={createEvent}
+            disabled={isSubmitting}
+            className="w-full bg-gradient-to-r from-pink-500 to-orange-500 text-white font-black text-xl py-5 rounded-xl hover:opacity-90 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed tracking-widest"
+          >
+            {isSubmitting ? "CREATING..." : "CREATE EVENT"}
+          </button>
+        </div>
       </main>
     </div>
   );
