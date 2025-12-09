@@ -47,6 +47,19 @@ export default function EventPage() {
 
   const [isUrlCopied, setIsUrlCopied] = useState(false);
 
+  // --- 編集モード用ステート ---
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("19:00");
+
+  // --- 30分刻みの時間リスト ---
+  const timeOptions = [];
+  for (let i = 0; i < 24; i++) {
+    const hour = i.toString().padStart(2, "0");
+    timeOptions.push(`${hour}:00`);
+    timeOptions.push(`${hour}:30`);
+  }
+
   // --- データ取得 ---
   useEffect(() => {
     if (!id) return;
@@ -97,6 +110,47 @@ export default function EventPage() {
     setTimeout(() => setIsUrlCopied(false), 2000);
   };
 
+  // --- 日程追加機能 ---
+  const addCandidate = async () => {
+    if (!editDate || !event) return;
+    
+    // 日付フォーマット作成
+    const dateObj = new Date(editDate);
+    const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
+    const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()];
+    const newLabel = `${dateStr}(${dayStr}) ${editTime}〜`;
+
+    // 新しいIDを生成（既存の最大ID + 1）
+    const maxId = event.candidates.reduce((max, c) => Math.max(max, c.id), -1);
+    const newCandidate = { id: maxId + 1, label: newLabel };
+
+    // Firebase更新
+    try {
+      await updateDoc(doc(db, "events", id), {
+        candidates: [...event.candidates, newCandidate]
+      });
+      // フォームリセット
+      // setEditDate(""); // 連続入力をしやすくするためあえて消さない
+    } catch (e) {
+      alert("更新に失敗しました");
+    }
+  };
+
+  // --- 日程削除機能 ---
+  const deleteCandidate = async (candidateId: number) => {
+    if (!event) return;
+    if (!confirm("この日程を削除しますか？\n（入力済みの回答は見えなくなります）")) return;
+
+    try {
+      const newCandidates = event.candidates.filter(c => c.id !== candidateId);
+      await updateDoc(doc(db, "events", id), {
+        candidates: newCandidates
+      });
+    } catch (e) {
+      alert("削除に失敗しました");
+    }
+  };
+
   // --- DB操作 ---
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
@@ -141,39 +195,93 @@ export default function EventPage() {
         {/* ヘッダーカード */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
           
-          {/* URLコピーボタン (右上) */}
-          <button
-            onClick={copyUrl}
-            className="absolute top-4 right-4 bg-white/20 hover:bg-white/30 border border-white/40 text-white px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm z-30"
-          >
-            {isUrlCopied ? (
-              <><span>✨</span> コピー完了</>
-            ) : (
-              <><span>🔗</span> URLをコピー</>
+          {/* 右上ボタンエリア */}
+          <div className="absolute top-4 right-4 flex gap-2 z-30">
+            {/* 編集モード切替ボタン */}
+            <button
+              onClick={() => setIsEditMode(!isEditMode)}
+              className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm ${
+                isEditMode 
+                  ? "bg-orange-500 text-white hover:bg-orange-600 border border-orange-400" 
+                  : "bg-white/20 hover:bg-white/30 border border-white/40 text-white"
+              }`}
+            >
+              {isEditMode ? "完了" : "✏️ 日程編集"}
+            </button>
+
+            {/* URLコピーボタン */}
+            {!isEditMode && (
+              <button
+                onClick={copyUrl}
+                className="bg-white/20 hover:bg-white/30 border border-white/40 text-white px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm"
+              >
+                {isUrlCopied ? "✨ コピー完了" : "🔗 URLをコピー"}
+              </button>
             )}
-          </button>
+          </div>
 
           <div className="bg-indigo-600 p-6 text-white">
             <h1 className="text-2xl font-bold pr-32">{event.title}</h1>
             <p className="mt-2 opacity-90 whitespace-pre-wrap text-sm">{event.detail}</p>
           </div>
 
-          {/* 出欠表（スマホ対応：名前固定） */}
+          {/* 編集モード時の追加フォーム */}
+          {isEditMode && (
+            <div className="bg-orange-50 p-4 border-b border-orange-100 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
+                <span className="font-bold text-orange-800 text-sm">日程追加:</span>
+                <input 
+                  type="date" 
+                  className="border border-gray-300 rounded p-1.5 text-sm"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                />
+                <select 
+                  className="border border-gray-300 rounded p-1.5 text-sm bg-white"
+                  value={editTime}
+                  onChange={(e) => setEditTime(e.target.value)}
+                >
+                  {timeOptions.map(t => <option key={t} value={t}>{t}〜</option>)}
+                </select>
+                <button 
+                  onClick={addCandidate}
+                  disabled={!editDate}
+                  className="bg-orange-500 text-white px-4 py-1.5 rounded text-sm font-bold hover:bg-orange-600 disabled:opacity-50"
+                >
+                  追加
+                </button>
+              </div>
+              <p className="text-xs text-center text-orange-600 mt-2">※日程の削除は、下の表の列見出しにある「ゴミ箱」ボタンを押してください。</p>
+            </div>
+          )}
+
+          {/* 出欠表 */}
           <div className="overflow-x-auto pb-2">
             <table className="w-full border-collapse text-sm min-w-max">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  {/* 名前列を固定 (sticky) */}
                   <th className="p-3 text-left w-32 sm:w-40 sticky left-0 z-20 bg-gray-50 border-r border-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                     参加者 ({participants.length})
                   </th>
                   {event.candidates.map((c) => {
                     const isBest = bestIds.includes(c.id);
                     return (
-                      <th key={c.id} className={`p-2 text-center min-w-[90px] border-l border-white relative ${
-                        isBest ? "bg-yellow-100 text-yellow-900" : "bg-indigo-50 text-indigo-900"
+                      <th key={c.id} className={`p-2 text-center min-w-[90px] border-l border-white relative group ${
+                        isBest && !isEditMode ? "bg-yellow-100 text-yellow-900" : "bg-indigo-50 text-indigo-900"
                       }`}>
-                        {isBest && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-lg">👑</div>}
+                        {isBest && !isEditMode && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-lg">👑</div>}
+                        
+                        {/* 編集モード時の削除ボタン */}
+                        {isEditMode && (
+                          <button 
+                            onClick={() => deleteCandidate(c.id)}
+                            className="absolute -top-2 -right-2 bg-red-500 text-white w-5 h-5 rounded-full flex items-center justify-center shadow-md hover:bg-red-600 z-10"
+                            title="この日程を削除"
+                          >
+                            ×
+                          </button>
+                        )}
+
                         <div className="font-bold">{c.label.split(' ')[0]}</div>
                         <div className="text-xs opacity-70">{c.label.split(' ')[1]}</div>
                       </th>
@@ -185,14 +293,13 @@ export default function EventPage() {
               <tbody>
                 {participants.map((p) => (
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    {/* 名前列を固定 (sticky) */}
                     <td className="p-3 font-bold text-gray-700 sticky left-0 z-10 bg-white border-r border-gray-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] truncate max-w-[120px]">
                       {p.name}
                     </td>
                     {event.candidates.map((c) => {
                       const isBest = bestIds.includes(c.id);
                       return (
-                        <td key={c.id} className={`p-2 text-center border-l border-gray-100 ${isBest ? "bg-yellow-50/30" : ""}`}>
+                        <td key={c.id} className={`p-2 text-center border-l border-gray-100 ${isBest && !isEditMode ? "bg-yellow-50/30" : ""}`}>
                           {renderSymbol(p.answers[c.id])}
                         </td>
                       );
