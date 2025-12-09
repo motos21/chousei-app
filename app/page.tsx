@@ -42,7 +42,6 @@ export default function Home() {
         title: title,
         detail: detail,
         candidates: candidates.map((c, i) => ({ id: i, label: c })),
-        fee: "",
         created_at: serverTimestamp(),
       });
       router.push(`/events/${docRef.id}`);
@@ -54,75 +53,75 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white font-sans selection:bg-cyan-500 selection:text-black">
-      <main className="max-w-2xl mx-auto py-12 px-6">
+    <div className="min-h-screen bg-[#050505] text-white font-sans selection:bg-cyan-500 selection:text-black">
+      <main className="max-w-3xl mx-auto py-16 px-6">
         
-        {/* ヘッダー */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-black tracking-tighter mb-4 text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 drop-shadow-lg">
-            SMART<br/>SCHEDULER
+        {/* タイトルエリア */}
+        <div className="mb-16 border-l-8 border-cyan-500 pl-6">
+          <h1 className="text-6xl font-black tracking-tighter mb-2 leading-none">
+            SMART<br/><span className="text-cyan-500">SCHEDULER</span>
           </h1>
-          <p className="text-slate-400 font-bold tracking-wider text-sm">
-            URLを送るだけ。最強にシンプルな調整ツール。
+          <p className="text-slate-400 font-bold tracking-widest text-sm mt-4 uppercase">
+            Simple Adjustment Tool / ログイン不要の調整ツール
           </p>
         </div>
 
-        {/* 3ステップガイド (カードスタイル) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
-          <div className="bg-[#1E293B] p-6 rounded-none border-l-4 border-cyan-400">
-            <div className="text-cyan-400 font-black text-4xl mb-2 opacity-50">01</div>
-            <h3 className="font-bold text-lg mb-1">イベント作成</h3>
-            <p className="text-xs text-slate-400">タイトルと候補日を決める</p>
+        {/* 3ステップガイド */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-0 mb-16 border border-slate-800">
+          <div className="bg-[#111] p-8 border-b md:border-b-0 md:border-r border-slate-800 hover:bg-[#161616] transition">
+            <div className="text-cyan-500 font-black text-5xl mb-4 opacity-30">01</div>
+            <h3 className="font-bold text-lg mb-1 tracking-wider text-cyan-400">CREATE</h3>
+            <p className="text-xs text-slate-400">イベントと候補日を作成</p>
           </div>
-          <div className="bg-[#1E293B] p-6 rounded-none border-l-4 border-pink-500">
-            <div className="text-pink-500 font-black text-4xl mb-2 opacity-50">02</div>
-            <h3 className="font-bold text-lg mb-1">URLをシェア</h3>
-            <p className="text-xs text-slate-400">LINE等でメンバーに送る</p>
+          <div className="bg-[#111] p-8 border-b md:border-b-0 md:border-r border-slate-800 hover:bg-[#161616] transition">
+            <div className="text-pink-500 font-black text-5xl mb-4 opacity-30">02</div>
+            <h3 className="font-bold text-lg mb-1 tracking-wider text-pink-500">SHARE</h3>
+            <p className="text-xs text-slate-400">URLをメンバーに共有</p>
           </div>
-          <div className="bg-[#1E293B] p-6 rounded-none border-l-4 border-orange-400">
-            <div className="text-orange-400 font-black text-4xl mb-2 opacity-50">03</div>
-            <h3 className="font-bold text-lg mb-1">自動集計</h3>
-            <p className="text-xs text-slate-400">◯✕がリアルタイムに揃う</p>
+          <div className="bg-[#111] p-8 hover:bg-[#161616] transition">
+            <div className="text-orange-500 font-black text-5xl mb-4 opacity-30">03</div>
+            <h3 className="font-bold text-lg mb-1 tracking-wider text-orange-500">ANSWER</h3>
+            <p className="text-xs text-slate-400">自動で集計完了</p>
           </div>
         </div>
 
         {/* メインフォーム */}
-        <div className="bg-[#1E293B] p-8 rounded-2xl shadow-2xl border border-slate-700">
+        <div className="space-y-10">
           
-          <div className="mb-8">
-            <label className="block text-cyan-400 font-bold mb-2 text-sm uppercase tracking-wider">Event Name</label>
+          <div className="relative group">
+            <label className="block text-cyan-500 font-black mb-2 text-xs uppercase tracking-widest pl-1">Event Name / イベント名</label>
             <input
               type="text"
-              className="w-full bg-[#0F172A] border-2 border-slate-700 rounded-xl p-4 text-lg focus:border-cyan-400 focus:ring-0 outline-none transition placeholder-slate-600"
-              placeholder="イベント名を入力..."
+              className="w-full bg-[#1A1A1A] border-2 border-slate-700 p-5 text-xl font-bold text-white placeholder-slate-600 focus:border-cyan-500 focus:bg-black outline-none transition-all"
+              placeholder="例：プロジェクト定例、忘年会"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
           </div>
 
-          <div className="mb-8">
-            <label className="block text-cyan-400 font-bold mb-2 text-sm uppercase tracking-wider">Detail</label>
+          <div className="relative group">
+            <label className="block text-cyan-500 font-black mb-2 text-xs uppercase tracking-widest pl-1">Detail / 詳細メモ</label>
             <textarea
-              className="w-full bg-[#0F172A] border-2 border-slate-700 rounded-xl p-4 text-base focus:border-cyan-400 focus:ring-0 outline-none transition placeholder-slate-600"
+              className="w-full bg-[#1A1A1A] border-2 border-slate-700 p-5 text-base text-white placeholder-slate-600 focus:border-cyan-500 focus:bg-black outline-none transition-all"
               rows={3}
-              placeholder="詳細メモ（任意）..."
+              placeholder="場所やZoom URLなど..."
               value={detail}
               onChange={(e) => setDetail(e.target.value)}
             />
           </div>
 
-          <div className="mb-8">
-            <label className="block text-cyan-400 font-bold mb-4 text-sm uppercase tracking-wider">Candidates</label>
+          <div>
+            <label className="block text-cyan-500 font-black mb-4 text-xs uppercase tracking-widest pl-1">Candidates / 候補日程</label>
             
-            <div className="flex flex-col sm:flex-row gap-3 mb-4">
+            <div className="flex flex-col sm:flex-row gap-0 mb-4">
               <input
                 type="date"
-                className="flex-1 bg-[#334155] text-white rounded-lg p-3 outline-none cursor-pointer" // カレンダーアイコンが見えにくいブラウザ対策で背景色調整
+                className="flex-1 bg-[#222] text-white border-2 border-slate-700 p-4 outline-none focus:border-cyan-500 transition-colors"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
               />
               <select
-                className="w-full sm:w-32 bg-[#334155] text-white rounded-lg p-3 outline-none"
+                className="w-full sm:w-32 bg-[#222] text-white border-2 border-l-0 sm:border-l-0 border-t-0 sm:border-t-2 border-slate-700 p-4 outline-none focus:border-cyan-500 transition-colors"
                 value={selectedTime}
                 onChange={(e) => setSelectedTime(e.target.value)}
               >
@@ -133,29 +132,29 @@ export default function Home() {
               <button
                 onClick={addCandidate}
                 disabled={!selectedDate}
-                className="bg-cyan-500 text-black font-black px-6 py-3 rounded-lg hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500 transition active:scale-95"
+                className="bg-cyan-600 text-black font-black px-8 py-4 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 transition-all uppercase tracking-widest"
               >
-                追加
+                ADD
               </button>
             </div>
 
             {candidates.length > 0 ? (
-              <ul className="space-y-2">
+              <div className="border border-slate-800 bg-[#0A0A0A]">
                 {candidates.map((c, index) => (
-                  <li key={index} className="flex justify-between items-center bg-[#0F172A] p-3 rounded-lg border border-slate-700">
-                    <span className="font-bold font-mono">{c}</span>
+                  <div key={index} className="flex justify-between items-center p-4 border-b border-slate-800 last:border-b-0 hover:bg-[#111] transition">
+                    <span className="font-bold font-mono text-lg text-slate-200">{c}</span>
                     <button
                       onClick={() => setCandidates(candidates.filter((_, i) => i !== index))}
-                      className="text-slate-500 hover:text-pink-500 font-bold text-sm px-2"
+                      className="text-slate-600 hover:text-red-500 font-bold text-xs uppercase tracking-wider px-2 py-1 border border-transparent hover:border-red-500 transition-all"
                     >
                       DELETE
                     </button>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             ) : (
-              <div className="text-center py-6 border-2 border-dashed border-slate-700 rounded-xl text-slate-500 text-sm">
-                日程を追加してください
+              <div className="text-center py-8 border-2 border-dashed border-slate-800 text-slate-600 text-xs uppercase tracking-widest">
+                NO DATES ADDED
               </div>
             )}
           </div>
@@ -163,9 +162,9 @@ export default function Home() {
           <button
             onClick={createEvent}
             disabled={isSubmitting}
-            className="w-full bg-gradient-to-r from-pink-500 to-orange-500 text-white font-black text-xl py-5 rounded-xl hover:opacity-90 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed tracking-widest"
+            className="w-full bg-gradient-to-r from-cyan-600 via-blue-600 to-purple-600 text-white font-black text-2xl py-6 hover:opacity-90 transition shadow-[0_0_30px_rgba(8,145,178,0.4)] disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none tracking-widest uppercase"
           >
-            {isSubmitting ? "CREATING..." : "CREATE EVENT"}
+            {isSubmitting ? "PROCESSING..." : "CREATE EVENT"}
           </button>
         </div>
       </main>
