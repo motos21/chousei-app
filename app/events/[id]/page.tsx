@@ -28,7 +28,7 @@ type Participant = {
   comment: string; 
   answers: { [key: number]: string }; 
   hasPaid?: boolean;
-  browserId?: string; // 修正用：端末IDを記録
+  browserId?: string;
   created_at?: any;
 };
 
@@ -95,13 +95,13 @@ export default function EventPage() {
       setChatName(savedName);
     }
 
-    // 1. イベント情報の取得
+    // イベント取得
     const unsubEvent = onSnapshot(doc(db, "events", id), (d) => { 
         if (d.exists()) {
             const data = d.data() as EventData;
             setEvent(data);
             
-            // 履歴保存
+            // 履歴
             const stored = localStorage.getItem("chousei_history");
             let history: HistoryItem[] = stored ? JSON.parse(stored) : [];
             history = history.filter(h => h.id !== id);
@@ -110,14 +110,14 @@ export default function EventPage() {
         }
     });
 
-    // 2. 参加者の取得
+    // 参加者取得
     const qParticipants = query(collection(db, "events", id, "participants"), orderBy("created_at", "asc"));
     const unsubParticipants = onSnapshot(qParticipants, (s) => {
       const loadedParticipants = s.docs.map(d => ({ id: d.id, ...d.data() })) as Participant[];
       setParticipants(loadedParticipants);
     });
 
-    // 3. チャットの取得
+    // チャット取得
     const qMessages = query(collection(db, "events", id, "messages"), orderBy("createdAt", "asc"));
     const unsubMessages = onSnapshot(qMessages, (s) => {
       setMessages(s.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
@@ -126,25 +126,20 @@ export default function EventPage() {
     return () => { unsubEvent(); unsubParticipants(); unsubMessages(); };
   }, [id]);
 
-  // ★ 自分の既存データがあればフォームに反映する処理
+  // 自分のデータをフォームに反映
   useEffect(() => {
     if (!browserId || participants.length === 0) return;
-    
-    // 自分のbrowserIdを持つ参加データを探す
     const myExistingEntry = participants.find(p => p.browserId === browserId);
-    
     if (myExistingEntry) {
       setName(myExistingEntry.name);
       setComment(myExistingEntry.comment);
       setMyAnswers(myExistingEntry.answers);
-      // チャット名も同期
       if(!chatName) setChatName(myExistingEntry.name);
     }
-  }, [browserId, participants.length]); // participantsが読み込まれたら実行
+  }, [browserId, participants.length]);
 
   // --- ロジック ---
 
-  // 自分が既に登録済みかチェック
   const myEntryId = participants.find(p => p.browserId === browserId)?.id;
 
   const bestIds = (() => {
@@ -172,6 +167,31 @@ export default function EventPage() {
     const newAnswers: { [key: number]: string } = {}; 
     event.candidates.forEach(c => { newAnswers[c.id] = val; }); 
     setMyAnswers(newAnswers); 
+  };
+
+  // ★ 表を直接クリックした時の処理（即時保存）
+  const toggleTableAnswer = async (participantId: string, candidateId: number, currentVal: string) => {
+    // 自分の行以外は操作させない
+    if (participantId !== myEntryId) return;
+
+    // 次の値へローテーション: o -> t -> x -> o
+    let nextVal = "o";
+    if (currentVal === "o") nextVal = "t";
+    else if (currentVal === "t") nextVal = "x";
+    else if (currentVal === "x") nextVal = "o";
+
+    // 1. 画面上の見た目を即座に更新 (ローカルstate)
+    const newAnswers = { ...myAnswers, [candidateId]: nextVal };
+    setMyAnswers(newAnswers);
+
+    // 2. データベースを即座に更新
+    try {
+      await updateDoc(doc(db, "events", id, "participants", participantId), {
+        answers: newAnswers
+      });
+    } catch (e) {
+      alert("更新に失敗しました。通信環境を確認してください。");
+    }
   };
 
   const addCandidate = async () => { 
@@ -205,7 +225,6 @@ export default function EventPage() {
     } catch (e) { alert("更新失敗"); } 
   };
 
-  // ★ 参加登録・更新ロジック（大幅修正）
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
     if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
@@ -213,31 +232,18 @@ export default function EventPage() {
     setIsSubmitting(true);
     try {
       if (myEntryId) {
-        // --- 更新モード (既存のIDがある場合) ---
         await updateDoc(doc(db, "events", id, "participants", myEntryId), {
-          name,
-          comment,
-          answers: myAnswers,
-          // created_at は更新しない
+          name, comment, answers: myAnswers
         });
-        alert("回答を修正しました！");
+        alert("回答を修正しました！表を直接クリックしても修正できます。");
       } else {
-        // --- 新規登録モード ---
         await addDoc(collection(db, "events", id, "participants"), { 
-          name, 
-          comment, 
-          answers: myAnswers, 
-          hasPaid: false, 
-          browserId: browserId, // ★ここで端末IDを保存して、次回「自分だ」とわかるようにする
-          created_at: serverTimestamp(), 
+          name, comment, answers: myAnswers, hasPaid: false, browserId: browserId, created_at: serverTimestamp(), 
         });
         alert("登録しました！");
       }
-      
-      // 名前保存
       localStorage.setItem("chousei_user_name", name);
       setChatName(name);
-
     } catch (e: any) { 
       console.error(e);
       alert("送信エラー: " + e.message); 
@@ -250,20 +256,14 @@ export default function EventPage() {
     if (!chatText) return;
     const sender = chatName || name;
     if (!sender) return alert("名前を入力してください");
-
     try { 
       await addDoc(collection(db, "events", id, "messages"), { 
-        text: chatText, 
-        senderName: sender, 
-        senderId: browserId, 
-        createdAt: serverTimestamp() 
+        text: chatText, senderName: sender, senderId: browserId, createdAt: serverTimestamp() 
       }); 
       setChatText(""); 
       setChatName(sender);
       localStorage.setItem("chousei_user_name", sender);
-    } catch (e: any) {
-      alert("エラー: " + e.message);
-    } 
+    } catch (e: any) { alert("エラー: " + e.message); } 
   };
 
   const deleteMessage = async (mid: string) => { 
@@ -323,7 +323,7 @@ export default function EventPage() {
               </div>
             )}
 
-            {/* 出欠テーブル */}
+            {/* 出欠テーブル (クリック編集機能付き) */}
             <div className="overflow-x-auto border border-white bg-[#0A0A0A]">
               <table className="w-full border-collapse text-sm whitespace-nowrap">
                 <thead>
@@ -367,8 +367,18 @@ export default function EventPage() {
                         </td>
                         {event.candidates.map((c) => {
                           const isBest = bestIds.includes(c.id);
+                          // ★ 自分の行ならクリックできるようにする
                           return (
-                            <td key={c.id} className={`p-2 text-center border-l border-white ${isBest && !isEditMode ? "bg-cyan-900/10" : ""}`}>
+                            <td 
+                              key={c.id} 
+                              onClick={() => toggleTableAnswer(p.id, c.id, p.answers[c.id])}
+                              className={`
+                                p-2 text-center border-l border-white transition select-none
+                                ${isBest && !isEditMode ? "bg-cyan-900/10" : ""}
+                                ${isMyRow ? "cursor-pointer hover:bg-cyan-500/20 active:scale-90" : ""}
+                              `}
+                              title={isMyRow ? "クリックして変更 (◎→△→✕)" : ""}
+                            >
                               {renderSymbol(p.answers[c.id])}
                             </td>
                           );
@@ -381,6 +391,12 @@ export default function EventPage() {
               </table>
               {participants.length === 0 && <div className="p-12 text-center text-slate-600 font-mono text-xs tracking-widest uppercase">No participants yet / まだ参加者がいません</div>}
             </div>
+            {/* 使い方のヒント */}
+            {myEntryId && (
+              <p className="text-cyan-500 text-xs font-bold text-right animate-pulse">
+                TIP: 表の中の自分の ◎△✕ をクリックすると直接変更できます
+              </p>
+            )}
           </div>
 
           {/* 右サイドバー (入力 & チャット) */}
@@ -389,10 +405,10 @@ export default function EventPage() {
             {/* 入力フォーム */}
             <div className={`bg-[#111] p-8 border hover:border-cyan-500 transition duration-300 ${myEntryId ? "border-cyan-600 shadow-[0_0_15px_rgba(8,145,178,0.1)]" : "border-white"}`}>
               <h2 className={`font-black text-xl mb-1 uppercase tracking-wider ${myEntryId ? "text-cyan-400" : "text-white"}`}>
-                {myEntryId ? "Edit Your Entry" : "New Entry"}
+                {myEntryId ? "Your Entry (Registered)" : "New Entry"}
               </h2>
               <p className="text-slate-500 text-xs mb-6 font-bold">
-                {myEntryId ? "回答を修正できます" : "出欠を入力してください"}
+                {myEntryId ? "表をクリックで簡単修正できます" : "出欠を入力してください"}
               </p>
               
               <div className="space-y-6">
@@ -456,9 +472,7 @@ export default function EventPage() {
                 })}
               </div>
               
-              {/* チャット入力エリア（分離型デザイン） */}
               <div className="p-6 bg-[#151515] border-t border-white space-y-4">
-                {/* 名前入力 */}
                 <div>
                    <label className="block text-pink-500 text-[10px] font-black uppercase tracking-widest mb-2">Your Name / お名前 (必須)</label>
                    <input 
@@ -470,7 +484,6 @@ export default function EventPage() {
                    />
                 </div>
 
-                {/* メッセージ入力 */}
                 <div className="flex gap-0">
                   <input 
                     type="text" 
