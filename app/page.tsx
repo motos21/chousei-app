@@ -17,17 +17,14 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
 
-  // --- 追加モード管理 ---
-  const [addMode, setAddMode] = useState<"single" | "range">("single");
-  
-  // 単発用
-  const [singleDate, setSingleDate] = useState("");
-  
-  // 期間用
+  // --- カレンダー表示用の状態管理 ---
+  const [currentDate, setCurrentDate] = useState(new Date()); // 表示中の月
+
+  // --- 期間選択用 ---
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
-  // 共通の時間
+  // --- 共通の時間設定 ---
   const [selectedTime, setSelectedTime] = useState("19:00");
 
   const timeOptions = [];
@@ -48,16 +45,39 @@ export default function Home() {
     loadHistory();
   }, []);
 
-  // --- 単発追加 ---
-  const addSingleCandidate = () => {
-    if (!singleDate) return;
-    const dateObj = new Date(singleDate);
-    const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
+  // --- ヘルパー関数: 日付文字列生成 ---
+  // Dateオブジェクトから "12/9(火) 19:00〜" 形式の文字列を作成
+  const formatCandidateString = (dateObj: Date, time: string) => {
+    const m = dateObj.getMonth() + 1;
+    const d = dateObj.getDate();
     const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()];
-    const newCandidate = `${dateStr}(${dayStr}) ${selectedTime}〜`;
-    
-    if (!candidates.includes(newCandidate)) {
-      setCandidates([...candidates, newCandidate]);
+    return `${m}/${d}(${dayStr}) ${time}〜`;
+  };
+
+  // 文字列 "12/9(火) 19:00〜" から日付部分 "12/9" だけ判定用に抽出する簡易ヘルパー
+  // (厳密な年管理が必要な場合はロジックを強化してください。今回は簡易版として実装)
+  const isSelected = (year: number, month: number, day: number) => {
+    // 候補リストの中に、この日付が含まれているかチェック
+    // ※年をまたぐ場合などは厳密なID管理推奨ですが、ここでは表示文字列ベースでマッチングさせます
+    const searchStr = `${month + 1}/${day}(`; 
+    return candidates.some(c => c.startsWith(searchStr));
+  };
+
+  // --- カレンダーの日付をクリックした時の処理 ---
+  const toggleDate = (year: number, month: number, day: number) => {
+    const dateObj = new Date(year, month, day);
+    const candidateStr = formatCandidateString(dateObj, selectedTime);
+
+    // 既に候補にあるかチェック（完全一致で判定）
+    if (candidates.includes(candidateStr)) {
+      setCandidates(candidates.filter(c => c !== candidateStr));
+    } else {
+      // 日付順に並べ替えて追加したい場合はここでソートロジックを入れる
+      // 今回は単純追加（あとでリスト表示側でソートも可能）
+      const newCandidates = [...candidates, candidateStr];
+      // 簡易ソート: 文字列ベースだと限界があるため、そのまま追加するか、
+      // 本格的にやるならオブジェクト{date: Date, str: string}で管理するのがベスト
+      setCandidates(newCandidates);
     }
   };
 
@@ -67,18 +87,14 @@ export default function Home() {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    // 日付が逆転していたら入れ替え
     if (start > end) {
       alert("開始日が終了日より後になっています");
       return;
     }
 
     const newItems: string[] = [];
-    // startからendまでループ
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-       const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
-       const dayStr = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
-       const candidate = `${dateStr}(${dayStr}) ${selectedTime}〜`;
+       const candidate = formatCandidateString(d, selectedTime);
        if (!candidates.includes(candidate) && !newItems.includes(candidate)) {
          newItems.push(candidate);
        }
@@ -86,6 +102,57 @@ export default function Home() {
     setCandidates([...candidates, ...newItems]);
   };
 
+  // --- カレンダー描画用データ生成 ---
+  const renderCalendarGrid = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    
+    const firstDay = new Date(year, month, 1).getDay(); // 1日の曜日
+    const lastDate = new Date(year, month + 1, 0).getDate(); // 月の最終日
+
+    const cells = [];
+    
+    // 空白セル
+    for (let i = 0; i < firstDay; i++) {
+      cells.push(<div key={`empty-${i}`} className="h-12 w-full"></div>);
+    }
+
+    // 日付セル
+    for (let day = 1; day <= lastDate; day++) {
+      const active = isSelected(year, month, day);
+      const isToday = 
+        new Date().getDate() === day && 
+        new Date().getMonth() === month && 
+        new Date().getFullYear() === year;
+
+      cells.push(
+        <div 
+          key={`day-${day}`}
+          onClick={() => toggleDate(year, month, day)}
+          className={`
+            h-12 w-full flex items-center justify-center cursor-pointer border transition-all duration-200 font-bold relative
+            ${active 
+              ? "bg-cyan-600 border-cyan-500 text-black shadow-[0_0_15px_rgba(8,145,178,0.5)] z-10" 
+              : "bg-[#050505] border-slate-800 text-slate-400 hover:bg-[#1A1A1A] hover:border-slate-600 hover:text-white"
+            }
+            ${isToday && !active ? "border-cyan-500 text-cyan-500" : ""}
+          `}
+        >
+          {day}
+        </div>
+      );
+    }
+    return cells;
+  };
+
+  const prevMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+  };
+  const nextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  };
+
+  // --- イベント作成送信 ---
   const createEvent = async () => {
     if (!title) { alert("イベント名を入力してください"); return; }
     if (candidates.length === 0) { alert("候補日を少なくとも1つ追加してください"); return; }
@@ -165,117 +232,115 @@ export default function Home() {
             />
           </div>
 
+          {/* 候補日程セクション */}
           <div>
-            <label className="block text-cyan-500 font-black mb-4 text-xs uppercase tracking-widest pl-1">Candidates / 候補日程</label>
+            <label className="block text-cyan-500 font-black mb-4 text-xs uppercase tracking-widest pl-1">
+              Select Dates / 候補日選択
+            </label>
             
-            {/* モード切り替えタブ */}
-            <div className="flex mb-4 gap-2">
-              <button 
-                onClick={() => setAddMode("single")}
-                className={`flex-1 py-2 text-xs font-black uppercase tracking-widest transition border ${addMode === "single" ? "bg-cyan-600 text-black border-cyan-600" : "bg-black text-slate-500 border-slate-700 hover:border-slate-500"}`}
-              >
-                Single Date (単発)
-              </button>
-              <button 
-                onClick={() => setAddMode("range")}
-                className={`flex-1 py-2 text-xs font-black uppercase tracking-widest transition border ${addMode === "range" ? "bg-cyan-600 text-black border-cyan-600" : "bg-black text-slate-500 border-slate-700 hover:border-slate-500"}`}
-              >
-                Date Range (期間一括)
-              </button>
-            </div>
-
-            {/* 追加フォームエリア */}
-            <div className="bg-[#111] border border-white p-4 mb-4">
+            {/* カレンダーエリア全体 */}
+            <div className="bg-[#0A0A0A] border-2 border-white p-6">
               
-              {/* 時間選択 (共通) */}
-              <div className="mb-4">
-                <label className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1 block">Time / 時間 (固定)</label>
-                <select
-                  className="w-full bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500"
-                  value={selectedTime}
-                  onChange={(e) => setSelectedTime(e.target.value)}
-                >
-                  {timeOptions.map((time) => (
-                    <option key={time} value={time}>{time}〜</option>
-                  ))}
-                </select>
-              </div>
-
-              {addMode === "single" ? (
-                // 単発モード
-                <div className="flex gap-2">
-                  <input
-                    type="date"
-                    // ↓ ここに [color-scheme:dark] を指定してカレンダーアイコンを白くしています
-                    className="flex-1 bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500 [color-scheme:dark]"
-                    value={singleDate}
-                    onChange={(e) => setSingleDate(e.target.value)}
-                  />
-                  <button
-                    onClick={addSingleCandidate}
-                    disabled={!singleDate}
-                    className="bg-cyan-600 text-black font-black px-6 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 uppercase"
+              {/* コントロールエリア (時間 & 期間一括) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 border-b border-slate-800 pb-8">
+                {/* 左: 時間固定 */}
+                <div>
+                   <label className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold mb-2 block">
+                     ① Fixed Time / 時間(固定)
+                   </label>
+                   <select
+                    className="w-full bg-[#111] text-white border border-slate-700 p-3 outline-none focus:border-cyan-500 font-bold"
+                    value={selectedTime}
+                    onChange={(e) => setSelectedTime(e.target.value)}
                   >
-                    ADD
-                  </button>
+                    {timeOptions.map((time) => (
+                      <option key={time} value={time}>{time}〜</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-2">
+                    ※ 選択した時間が全ての日程に適用されます
+                  </p>
                 </div>
-              ) : (
-                // 期間モード
-                <div className="flex flex-col gap-2">
-                   <div className="flex gap-2 items-center">
-                    <div className="flex-1">
-                      <label className="text-[10px] text-slate-400 uppercase font-bold">Start</label>
-                      <input
-                        type="date"
-                        className="w-full bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500 [color-scheme:dark]"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                      />
-                    </div>
-                    <span className="text-white pt-4">～</span>
-                    <div className="flex-1">
-                      <label className="text-[10px] text-slate-400 uppercase font-bold">End</label>
-                      <input
-                        type="date"
-                        className="w-full bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500 [color-scheme:dark]"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                      />
-                    </div>
-                   </div>
-                   <button
+
+                {/* 右: 期間一括追加 */}
+                <div>
+                  <label className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2 block">
+                     ② Range Add / 期間一括追加 (Optional)
+                  </label>
+                  <div className="flex gap-2 mb-2">
+                    <input type="date" className="w-1/2 bg-[#111] border border-slate-700 p-2 text-sm [color-scheme:dark] outline-none focus:border-cyan-500"
+                      value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                    <input type="date" className="w-1/2 bg-[#111] border border-slate-700 p-2 text-sm [color-scheme:dark] outline-none focus:border-cyan-500"
+                      value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                  </div>
+                  <button
                     onClick={addRangeCandidates}
                     disabled={!startDate || !endDate}
-                    className="w-full bg-cyan-600 text-black font-black py-3 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 uppercase mt-2"
+                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold tracking-widest uppercase disabled:opacity-30 transition"
                   >
-                    ADD ALL DATES
+                    期間を一括でリストに追加
                   </button>
+                </div>
+              </div>
+
+              {/* カレンダー本体 */}
+              <div className="mb-4">
+                 <div className="flex justify-between items-center mb-4">
+                    <button onClick={prevMonth} className="text-white hover:text-cyan-500 p-2 font-black text-xl">&lt;</button>
+                    <span className="text-xl font-black tracking-widest text-white">
+                      {currentDate.getFullYear()} . {currentDate.getMonth() + 1}
+                    </span>
+                    <button onClick={nextMonth} className="text-white hover:text-cyan-500 p-2 font-black text-xl">&gt;</button>
+                 </div>
+
+                 {/* 曜日ヘッダー */}
+                 <div className="grid grid-cols-7 gap-1 mb-2 text-center">
+                    {["SUN","MON","TUE","WED","THU","FRI","SAT"].map(d => (
+                      <div key={d} className="text-[10px] font-bold text-slate-500">{d}</div>
+                    ))}
+                 </div>
+
+                 {/* 日付グリッド */}
+                 <div className="grid grid-cols-7 gap-1">
+                    {renderCalendarGrid()}
+                 </div>
+              </div>
+
+              <div className="text-center text-[10px] text-slate-500 mt-2">
+                日付をクリックして ON/OFF を切り替えられます
+              </div>
+
+            </div>
+
+            {/* 追加済みリスト表示エリア */}
+            <div className="mt-4 border border-white bg-[#0A0A0A]">
+              <div className="p-2 bg-[#111] border-b border-white text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                Selected Dates List ({candidates.length})
+              </div>
+              
+              {candidates.length > 0 ? (
+                <div className="max-h-60 overflow-y-auto">
+                  {candidates.map((c, index) => (
+                    <div key={index} className="flex justify-between items-center p-4 border-b border-slate-800 last:border-b-0 hover:bg-[#111] transition group">
+                      <span className="font-bold font-mono text-lg text-cyan-400 group-hover:text-cyan-300 transition">{c}</span>
+                      <button
+                        onClick={() => setCandidates(candidates.filter((_, i) => i !== index))}
+                        className="text-slate-500 hover:text-red-500 font-bold text-xs uppercase tracking-wider px-2 transition-all"
+                      >
+                        REMOVE
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-600 text-xs uppercase tracking-widest">
+                  NO DATES SELECTED
                 </div>
               )}
             </div>
-
-            {/* 追加済みリスト */}
-            {candidates.length > 0 ? (
-              <div className="border border-white bg-[#0A0A0A]">
-                {candidates.map((c, index) => (
-                  <div key={index} className="flex justify-between items-center p-4 border-b border-white last:border-b-0 hover:bg-[#111] transition">
-                    <span className="font-bold font-mono text-lg text-slate-200">{c}</span>
-                    <button
-                      onClick={() => setCandidates(candidates.filter((_, i) => i !== index))}
-                      className="text-slate-400 hover:text-red-500 font-bold text-xs uppercase tracking-wider px-2 py-1 border border-transparent hover:border-red-500 transition-all"
-                    >
-                      DELETE
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 border-2 border-dashed border-white text-slate-500 text-xs uppercase tracking-widest">
-                NO DATES ADDED
-              </div>
-            )}
           </div>
 
+          {/* 送信ボタン */}
           <button
             onClick={createEvent}
             disabled={isSubmitting}
