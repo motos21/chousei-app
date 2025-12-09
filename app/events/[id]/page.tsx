@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, collection, addDoc, deleteDoc, serverTimestamp, query, orderBy } from "firebase/firestore";
+import { doc, onSnapshot, collection, addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy } from "firebase/firestore";
 
 // --- 型定義 ---
 type EventData = {
