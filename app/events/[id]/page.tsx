@@ -3,28 +3,68 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, collection, addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy } from "firebase/firestore";
+import { 
+  doc, 
+  onSnapshot, 
+  collection, 
+  addDoc, 
+  deleteDoc, 
+  updateDoc, 
+  serverTimestamp, 
+  query, 
+  orderBy 
+} from "firebase/firestore";
 
-type EventData = { title: string; detail: string; candidates: { id: number; label: string }[]; };
-type Participant = { id: string; name: string; comment: string; answers: { [key: number]: string }; };
-type Message = { id: string; text: string; senderName: string; senderId: string; createdAt: any; };
+// --- 型定義 ---
+type EventData = { 
+  title: string; 
+  detail: string; 
+  candidates: { id: number; label: string }[]; 
+};
+
+type Participant = { 
+  id: string; 
+  name: string; 
+  comment: string; 
+  answers: { [key: number]: string }; 
+  hasPaid?: boolean; // 支払いフラグ
+  created_at?: any;
+};
+
+type Message = { 
+  id: string; 
+  text: string; 
+  senderName: string; 
+  senderId: string; 
+  createdAt: any; 
+};
+
 type HistoryItem = { id: string; title: string; visitedAt: number };
 
 export default function EventPage() {
   const params = useParams();
   const id = params.id as string;
+
   const [event, setEvent] = useState<EventData | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  
+  // 自分の入力用
   const [name, setName] = useState("");
   const [comment, setComment] = useState("");
   const [myAnswers, setMyAnswers] = useState<{ [key: number]: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // チャット用
   const [chatText, setChatText] = useState("");
   const [chatName, setChatName] = useState("");
   const [browserId, setBrowserId] = useState("");
+
+  // UI制御
   const [isUrlCopied, setIsUrlCopied] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false); // 編集モード
+
+  // 日程追加用
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("19:00");
 
@@ -35,8 +75,11 @@ export default function EventPage() {
     timeOptions.push(`${hour}:30`);
   }
 
+  // --- 初期化 & データ監視 ---
   useEffect(() => {
     if (!id) return;
+
+    // ブラウザID生成（チャットの本人判定用）
     let myId = localStorage.getItem("chousei_browser_id");
     if (!myId) {
       myId = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -44,50 +87,162 @@ export default function EventPage() {
     }
     setBrowserId(myId);
 
+    // 1. イベント情報の取得
     const unsubEvent = onSnapshot(doc(db, "events", id), (d) => { 
         if (d.exists()) {
             const data = d.data() as EventData;
             setEvent(data);
             
-            // 履歴保存 (タイトル取得後)
+            // 履歴保存
             const stored = localStorage.getItem("chousei_history");
             let history: HistoryItem[] = stored ? JSON.parse(stored) : [];
-            // 同じIDがあれば削除して先頭に追加（最新順）
             history = history.filter(h => h.id !== id);
             history.unshift({ id, title: data.title, visitedAt: Date.now() });
             localStorage.setItem("chousei_history", JSON.stringify(history.slice(0, 10)));
         }
     });
 
+    // 2. 参加者の取得
     const qParticipants = query(collection(db, "events", id, "participants"), orderBy("created_at", "asc"));
-    const unsubParticipants = onSnapshot(qParticipants, (s) => setParticipants(s.docs.map(d => ({ id: d.id, ...d.data() })) as Participant[]));
+    const unsubParticipants = onSnapshot(qParticipants, (s) => {
+      setParticipants(s.docs.map(d => ({ id: d.id, ...d.data() })) as Participant[]);
+    });
+
+    // 3. チャットの取得
     const qMessages = query(collection(db, "events", id, "messages"), orderBy("createdAt", "asc"));
-    const unsubMessages = onSnapshot(qMessages, (s) => setMessages(s.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]));
+    const unsubMessages = onSnapshot(qMessages, (s) => {
+      setMessages(s.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
+    });
+
     return () => { unsubEvent(); unsubParticipants(); unsubMessages(); };
   }, [id]);
 
+  // --- ロジック ---
+
+  // 最適な日程の算出 (◎=2点, △=1点)
   const bestIds = (() => {
     if (!event || participants.length === 0) return [];
     const scores: { [key: number]: number } = {};
-    event.candidates.forEach((c) => { scores[c.id] = 0; participants.forEach((p) => { if (p.answers[c.id] === "o") scores[c.id] += 2; if (p.answers[c.id] === "t") scores[c.id] += 1; }); });
+    
+    // 初期化
+    event.candidates.forEach((c) => { scores[c.id] = 0; });
+    
+    // 集計
+    participants.forEach((p) => { 
+      event.candidates.forEach((c) => {
+        if (p.answers[c.id] === "o") scores[c.id] += 2;
+        if (p.answers[c.id] === "t") scores[c.id] += 1;
+      });
+    });
+
     const maxScore = Math.max(...Object.values(scores));
     return maxScore === 0 ? [] : event.candidates.filter((c) => scores[c.id] === maxScore).map((c) => c.id);
   })();
 
-  const copyUrl = () => { navigator.clipboard.writeText(window.location.href); setIsUrlCopied(true); setTimeout(() => setIsUrlCopied(false), 2000); };
-  const setAllAnswers = (val: string) => { if (!event) return; const newAnswers: { [key: number]: string } = {}; event.candidates.forEach(c => { newAnswers[c.id] = val; }); setMyAnswers(newAnswers); };
-  const addCandidate = async () => { if (!editDate || !event) return; const dateObj = new Date(editDate); const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`; const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()]; const newLabel = `${dateStr}(${dayStr}) ${editTime}〜`; const maxId = event.candidates.reduce((max, c) => Math.max(max, c.id), -1); await updateDoc(doc(db, "events", id), { candidates: [...event.candidates, { id: maxId + 1, label: newLabel }]}); };
-  const deleteCandidate = async (cid: number) => { if (!event || !confirm("削除しますか？")) return; await updateDoc(doc(db, "events", id), { candidates: event.candidates.filter(c => c.id !== cid) }); };
-  const togglePayment = async (pid: string, currentStatus: boolean) => { try { await updateDoc(doc(db, "events", id, "participants", pid), { hasPaid: !currentStatus }); } catch (e) { alert("更新失敗"); } };
+  const copyUrl = () => { 
+    navigator.clipboard.writeText(window.location.href); 
+    setIsUrlCopied(true); 
+    setTimeout(() => setIsUrlCopied(false), 2000); 
+  };
 
+  const setAllAnswers = (val: string) => { 
+    if (!event) return; 
+    const newAnswers: { [key: number]: string } = {}; 
+    event.candidates.forEach(c => { newAnswers[c.id] = val; }); 
+    setMyAnswers(newAnswers); 
+  };
+
+  // --- 編集機能 (日程追加・削除・支払い) ---
+  const addCandidate = async () => { 
+    if (!editDate || !event) return; 
+    const dateObj = new Date(editDate); 
+    const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`; 
+    const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()]; 
+    const newLabel = `${dateStr}(${dayStr}) ${editTime}〜`; 
+    
+    const maxId = event.candidates.reduce((max, c) => Math.max(max, c.id), -1); 
+    
+    try {
+      await updateDoc(doc(db, "events", id), { 
+        candidates: [...event.candidates, { id: maxId + 1, label: newLabel }]
+      });
+      setEditDate("");
+    } catch (e) {
+      alert("更新エラー: 権限を確認してください");
+    }
+  };
+
+  const deleteCandidate = async (cid: number) => { 
+    if (!event || !confirm("この日程を削除しますか？")) return; 
+    try {
+      await updateDoc(doc(db, "events", id), { 
+        candidates: event.candidates.filter(c => c.id !== cid) 
+      });
+    } catch (e) {
+      alert("削除エラー");
+    }
+  };
+
+  // 支払いステータスの切り替え
+  const togglePayment = async (pid: string, currentStatus: boolean = false) => { 
+    if (!confirm(currentStatus ? "「未払い」に戻しますか？" : "「支払い済み」にしますか？")) return;
+    try { 
+      await updateDoc(doc(db, "events", id, "participants", pid), { hasPaid: !currentStatus }); 
+    } catch (e) { 
+      alert("更新失敗: 権限などを確認してください"); 
+    } 
+  };
+
+  // 参加登録
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
-    if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全て回答してください");
+    if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
+    
     setIsSubmitting(true);
-    try { await addDoc(collection(db, "events", id, "participants"), { name, comment, answers: myAnswers, hasPaid: false, created_at: serverTimestamp(), }); setName(""); setComment(""); setMyAnswers({}); setChatName(name); alert("登録しました！"); } catch { alert("エラー"); } finally { setIsSubmitting(false); }
+    try { 
+      await addDoc(collection(db, "events", id, "participants"), { 
+        name, 
+        comment, 
+        answers: myAnswers, 
+        hasPaid: false, 
+        created_at: serverTimestamp(), 
+      }); 
+      
+      setName(""); 
+      setComment(""); 
+      setMyAnswers({}); 
+      setChatName(name); // チャットの名前も同期
+      alert("登録しました！"); 
+    } catch (e: any) { 
+      console.error(e);
+      alert("送信エラー: " + e.message); 
+    } finally { 
+      setIsSubmitting(false); 
+    }
   };
-  const sendMessage = async () => { if (!chatText || !chatName) return; try { await addDoc(collection(db, "events", id, "messages"), { text: chatText, senderName: chatName, senderId: browserId, createdAt: serverTimestamp() }); setChatText(""); } catch (e) {} };
-  const deleteMessage = async (mid: string) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "events", id, "messages", mid)); };
+
+  // チャット送信
+  const sendMessage = async () => { 
+    if (!chatText) return;
+    if (!chatName) return alert("チャット用の名前を入力してください");
+
+    try { 
+      await addDoc(collection(db, "events", id, "messages"), { 
+        text: chatText, 
+        senderName: chatName, 
+        senderId: browserId, 
+        createdAt: serverTimestamp() 
+      }); 
+      setChatText(""); 
+    } catch (e: any) {
+      console.error(e);
+      alert("チャット送信エラー: " + e.message);
+    } 
+  };
+
+  const deleteMessage = async (mid: string) => { 
+    if (confirm("削除しますか？")) await deleteDoc(doc(db, "events", id, "messages", mid)); 
+  };
 
   const renderSymbol = (s: string) => {
     if (s === "o") return <span className="text-cyan-400 font-black text-xl">◎</span>;
@@ -128,7 +283,7 @@ export default function EventPage() {
               </div>
             </div>
 
-            {/* 編集モードフォーム */}
+            {/* 編集モードフォーム (日程追加) */}
             {isEditMode && (
               <div className="bg-[#150a05] border border-orange-900/50 p-6 animate-fadeIn">
                 <p className="text-orange-500 font-bold text-xs uppercase tracking-widest mb-4">ADD NEW DATE / 日程追加</p>
@@ -147,13 +302,17 @@ export default function EventPage() {
               <table className="w-full border-collapse text-sm whitespace-nowrap">
                 <thead>
                   <tr className="bg-[#111] border-b border-white">
-                    <th className="p-4 text-left w-40 sticky left-0 z-20 bg-[#111] border-r border-white text-slate-500 font-bold uppercase text-[10px] tracking-widest">Participant Name</th>
+                    <th className="p-4 text-left w-40 sticky left-0 z-20 bg-[#111] border-r border-white text-slate-500 font-bold uppercase text-[10px] tracking-widest">
+                      Participant Name
+                    </th>
                     {event.candidates.map((c) => {
                       const isBest = bestIds.includes(c.id);
                       return (
                         <th key={c.id} className={`p-3 text-center min-w-[100px] border-l border-white relative ${isBest && !isEditMode ? "bg-cyan-900/20" : ""}`}>
                           {isBest && !isEditMode && <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500"></div>}
-                          {isEditMode && <button onClick={() => deleteCandidate(c.id)} className="absolute top-1 right-1 text-red-500 hover:text-white hover:bg-red-500 w-4 h-4 flex items-center justify-center text-[10px] transition">×</button>}
+                          {isEditMode && (
+                            <button onClick={() => deleteCandidate(c.id)} className="absolute top-1 right-1 text-red-500 hover:text-white hover:bg-red-500 w-4 h-4 flex items-center justify-center text-[10px] transition">×</button>
+                          )}
                           <div className={`font-bold text-base font-mono ${isBest ? "text-cyan-400" : "text-slate-400"}`}>{c.label.split(' ')[0]}</div>
                           <div className="text-[10px] text-slate-600 uppercase mt-1">{c.label.split(' ')[1]}</div>
                         </th>
@@ -164,9 +323,20 @@ export default function EventPage() {
                 </thead>
                 <tbody>
                   {participants.map((p) => (
-                    <tr key={p.id} className="border-b border-white hover:bg-[#161616] transition">
+                    <tr key={p.id} className="border-b border-white hover:bg-[#161616] transition group">
                       <td className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px]">
-                        {p.name}
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{p.name}</span>
+                          {/* 編集モード時の集金ボタン (ここに追加しました) */}
+                          {isEditMode && (
+                            <button 
+                              onClick={() => togglePayment(p.id, p.hasPaid)}
+                              className={`text-[10px] px-2 py-0.5 border ${p.hasPaid ? "bg-cyan-900 text-cyan-300 border-cyan-500" : "bg-[#222] text-slate-500 border-slate-700"}`}
+                            >
+                              {p.hasPaid ? "¥ PAID" : "¥ UNPAID"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                       {event.candidates.map((c) => {
                         const isBest = bestIds.includes(c.id);
