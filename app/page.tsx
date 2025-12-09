@@ -1,58 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, collection, addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { useRouter } from "next/navigation";
 
-// --- 型定義 ---
-type EventData = {
-  title: string;
-  detail: string;
-  candidates: { id: number; label: string }[];
-};
-
-type Participant = {
-  id: string;
-  name: string;
-  comment: string;
-  answers: { [key: number]: string };
-};
-
-type Message = {
-  id: string;
-  text: string;
-  senderName: string;
-  senderId: string;
-  createdAt: any;
-};
-
-export default function EventPage() {
-  const params = useParams();
-  const id = params.id as string;
+export default function Home() {
+  const router = useRouter();
 
   // --- ステート管理 ---
-  const [event, setEvent] = useState<EventData | null>(null);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  
-  const [name, setName] = useState("");
-  const [comment, setComment] = useState("");
-  const [myAnswers, setMyAnswers] = useState<{ [key: number]: string }>({});
+  const [title, setTitle] = useState("");
+  const [detail, setDetail] = useState("");
+  const [candidates, setCandidates] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [chatText, setChatText] = useState("");
-  const [chatName, setChatName] = useState("");
-  const [browserId, setBrowserId] = useState("");
+  // 日付と時間の入力用
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedTime, setSelectedTime] = useState("19:00");
 
-  const [isUrlCopied, setIsUrlCopied] = useState(false);
-
-  // --- 編集モード用ステート ---
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [editDate, setEditDate] = useState("");
-  const [editTime, setEditTime] = useState("19:00");
-
-  // --- 30分刻みの時間リスト ---
   const timeOptions = [];
   for (let i = 0; i < 24; i++) {
     const hour = i.toString().padStart(2, "0");
@@ -60,317 +25,153 @@ export default function EventPage() {
     timeOptions.push(`${hour}:30`);
   }
 
-  // --- データ取得 ---
-  useEffect(() => {
-    if (!id) return;
-    let myId = localStorage.getItem("chousei_browser_id");
-    if (!myId) {
-      myId = Math.random().toString(36).substring(2) + Date.now().toString(36);
-      localStorage.setItem("chousei_browser_id", myId);
-    }
-    setBrowserId(myId);
-
-    const unsubEvent = onSnapshot(doc(db, "events", id), (doc) => {
-      if (doc.exists()) setEvent(doc.data() as EventData);
-    });
-
-    const qParticipants = query(collection(db, "events", id, "participants"), orderBy("created_at", "asc"));
-    const unsubParticipants = onSnapshot(qParticipants, (s) => {
-      setParticipants(s.docs.map(d => ({ id: d.id, ...d.data() })) as Participant[]);
-    });
-
-    const qMessages = query(collection(db, "events", id, "messages"), orderBy("createdAt", "asc"));
-    const unsubMessages = onSnapshot(qMessages, (s) => {
-      setMessages(s.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
-    });
-
-    return () => { unsubEvent(); unsubParticipants(); unsubMessages(); };
-  }, [id]);
-
-  // --- ヘルパー関数: ベスト日程のIDを取得 ---
-  const getBestCandidateIds = () => {
-    if (!event || participants.length === 0) return [];
-    const scores: { [key: number]: number } = {};
-    event.candidates.forEach((c) => {
-      scores[c.id] = 0;
-      participants.forEach((p) => {
-        if (p.answers[c.id] === "o") scores[c.id] += 2;
-        if (p.answers[c.id] === "t") scores[c.id] += 1;
-      });
-    });
-    const maxScore = Math.max(...Object.values(scores));
-    return maxScore === 0 ? [] : event.candidates.filter((c) => scores[c.id] === maxScore).map((c) => c.id);
-  };
-  const bestIds = getBestCandidateIds();
-
-  // --- 機能: URLコピー ---
-  const copyUrl = () => {
-    navigator.clipboard.writeText(window.location.href);
-    setIsUrlCopied(true);
-    setTimeout(() => setIsUrlCopied(false), 2000);
-  };
-
-  // --- 日程追加機能 ---
-  const addCandidate = async () => {
-    if (!editDate || !event) return;
-    
-    // 日付フォーマット作成
-    const dateObj = new Date(editDate);
+  // --- 候補日を追加 ---
+  const addCandidate = () => {
+    if (!selectedDate) return;
+    const dateObj = new Date(selectedDate);
     const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
     const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()];
-    const newLabel = `${dateStr}(${dayStr}) ${editTime}〜`;
-
-    // 新しいIDを生成（既存の最大ID + 1）
-    const maxId = event.candidates.reduce((max, c) => Math.max(max, c.id), -1);
-    const newCandidate = { id: maxId + 1, label: newLabel };
-
-    // Firebase更新
-    try {
-      await updateDoc(doc(db, "events", id), {
-        candidates: [...event.candidates, newCandidate]
-      });
-      // フォームリセット
-      // setEditDate(""); // 連続入力をしやすくするためあえて消さない
-    } catch (e) {
-      alert("更新に失敗しました");
+    const newCandidate = `${dateStr}(${dayStr}) ${selectedTime}〜`;
+    if (!candidates.includes(newCandidate)) {
+      setCandidates([...candidates, newCandidate]);
     }
   };
 
-  // --- 日程削除機能 ---
-  const deleteCandidate = async (candidateId: number) => {
-    if (!event) return;
-    if (!confirm("この日程を削除しますか？\n（入力済みの回答は見えなくなります）")) return;
-
-    try {
-      const newCandidates = event.candidates.filter(c => c.id !== candidateId);
-      await updateDoc(doc(db, "events", id), {
-        candidates: newCandidates
-      });
-    } catch (e) {
-      alert("削除に失敗しました");
-    }
-  };
-
-  // --- DB操作 ---
-  const submitAnswer = async () => {
-    if (!name) return alert("名前を入力してください");
-    if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
+  // --- 作成処理 ---
+  const createEvent = async () => {
+    if (!title) { alert("イベント名を入力してください"); return; }
+    if (candidates.length === 0) { alert("候補日を少なくとも1つ追加してください"); return; }
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, "events", id, "participants"), {
-        name, comment, answers: myAnswers, created_at: serverTimestamp(),
+      const docRef = await addDoc(collection(db, "events"), {
+        title: title,
+        detail: detail,
+        candidates: candidates.map((c, i) => ({ id: i, label: c })),
+        fee: "", // 会費初期値
+        created_at: serverTimestamp(),
       });
-      setName(""); setComment(""); setMyAnswers({}); setChatName(name);
-      alert("回答を登録しました！");
-    } catch { alert("エラーが発生しました"); } finally { setIsSubmitting(false); }
+      router.push(`/events/${docRef.id}`);
+    } catch (e) {
+      console.error("Error:", e);
+      alert("エラーが発生しました");
+      setIsSubmitting(false);
+    }
   };
-
-  const sendMessage = async () => {
-    if (!chatText || !chatName) return;
-    try {
-      await addDoc(collection(db, "events", id, "messages"), {
-        text: chatText, senderName: chatName, senderId: browserId, createdAt: serverTimestamp(),
-      });
-      setChatText("");
-    } catch (e) { console.error(e); }
-  };
-
-  const deleteMessage = async (mid: string) => {
-    if (confirm("削除しますか？")) await deleteDoc(doc(db, "events", id, "messages", mid));
-  };
-
-  const renderSymbol = (s: string) => {
-    if (s === "o") return <span className="text-green-500 font-bold text-lg">◎</span>;
-    if (s === "t") return <span className="text-yellow-500 font-bold text-lg">△</span>;
-    if (s === "x") return <span className="text-red-400 font-bold text-lg opacity-50">✕</span>;
-    return <span className="text-gray-200">-</span>;
-  };
-
-  if (!event) return <div className="p-10 text-center">読み込み中...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-4 sm:py-8 px-2 sm:px-4 font-sans text-gray-800">
-      <main className="max-w-5xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 font-sans text-gray-800">
+      <main className="max-w-2xl mx-auto bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden p-8">
         
-        {/* ヘッダーカード */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
+        {/* ヘッダー＆ガイドエリア */}
+        <div className="text-center mb-10">
+          <h1 className="text-3xl font-extrabold text-indigo-700 tracking-tight mb-2">
+            Smart Scheduler
+          </h1>
+          <p className="text-sm text-gray-500 mb-8">
+            ログイン不要。URLを送るだけの最もシンプルな調整ツール。
+          </p>
+
+          {/* おしゃれな3ステップガイド */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left bg-indigo-50/50 rounded-xl p-5 border border-indigo-100">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold mb-2 shadow-sm">1</div>
+              <h3 className="font-bold text-sm text-indigo-900">イベントを作る</h3>
+              <p className="text-xs text-gray-500 mt-1">名前と候補日を入力して<br/>ページを作成します</p>
+            </div>
+            <div className="flex flex-col items-center text-center relative">
+              {/* 矢印 (PCのみ表示) */}
+              <div className="hidden md:block absolute top-3 -left-1/2 w-full h-[1px] bg-indigo-200 -z-10"></div>
+              <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold mb-2 shadow-sm z-10">2</div>
+              <h3 className="font-bold text-sm text-indigo-900">URLをシェア</h3>
+              <p className="text-xs text-gray-500 mt-1">発行されたURLをLINE等で<br/>メンバーに送ります</p>
+            </div>
+            <div className="flex flex-col items-center text-center">
+              <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold mb-2 shadow-sm">3</div>
+              <h3 className="font-bold text-sm text-indigo-900">自動で集計</h3>
+              <p className="text-xs text-gray-500 mt-1">みんなが回答すると<br/>◯の数やベスト日が分かります</p>
+            </div>
+          </div>
+        </div>
+
+        {/* 入力フォーム */}
+        <div className="mb-6">
+          <label className="block text-sm font-bold text-gray-700 mb-2">イベント名 <span className="text-red-500">*</span></label>
+          <input
+            type="text"
+            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-gray-50 focus:bg-white"
+            placeholder="例：Q3 定例ミーティング、忘年会"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+        </div>
+
+        <div className="mb-6">
+          <label className="block text-sm font-bold text-gray-700 mb-2">詳細・メモ</label>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-gray-50 focus:bg-white"
+            rows={3}
+            placeholder="場所やZoomのURLなど"
+            value={detail}
+            onChange={(e) => setDetail(e.target.value)}
+          />
+        </div>
+
+        <div className="mb-8 bg-gray-50 p-6 rounded-xl border border-gray-200">
+          <label className="block text-sm font-bold text-gray-700 mb-4">候補日程を追加</label>
           
-          {/* 右上ボタンエリア */}
-          <div className="absolute top-4 right-4 flex gap-2 z-30">
-            {/* 編集モード切替ボタン */}
-            <button
-              onClick={() => setIsEditMode(!isEditMode)}
-              className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm ${
-                isEditMode 
-                  ? "bg-orange-500 text-white hover:bg-orange-600 border border-orange-400" 
-                  : "bg-white/20 hover:bg-white/30 border border-white/40 text-white"
-              }`}
+          <div className="flex flex-col sm:flex-row gap-4 mb-4">
+            <input
+              type="date"
+              className="flex-1 border border-gray-300 rounded-lg p-2.5 focus:ring-indigo-500 outline-none"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+            />
+            <select
+              className="w-32 border border-gray-300 rounded-lg p-2.5 focus:ring-indigo-500 outline-none bg-white"
+              value={selectedTime}
+              onChange={(e) => setSelectedTime(e.target.value)}
             >
-              {isEditMode ? "完了" : "✏️ 日程編集"}
+              {timeOptions.map((time) => (
+                <option key={time} value={time}>{time}〜</option>
+              ))}
+            </select>
+            <button
+              onClick={addCandidate}
+              disabled={!selectedDate}
+              className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg hover:bg-indigo-700 font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition shadow-sm"
+            >
+              追加
             </button>
-
-            {/* URLコピーボタン */}
-            {!isEditMode && (
-              <button
-                onClick={copyUrl}
-                className="bg-white/20 hover:bg-white/30 border border-white/40 text-white px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm"
-              >
-                {isUrlCopied ? "✨ コピー完了" : "🔗 URLをコピー"}
-              </button>
-            )}
           </div>
 
-          <div className="bg-indigo-600 p-6 text-white">
-            <h1 className="text-2xl font-bold pr-32">{event.title}</h1>
-            <p className="mt-2 opacity-90 whitespace-pre-wrap text-sm">{event.detail}</p>
-          </div>
-
-          {/* 編集モード時の追加フォーム */}
-          {isEditMode && (
-            <div className="bg-orange-50 p-4 border-b border-orange-100 animate-fadeIn">
-              <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
-                <span className="font-bold text-orange-800 text-sm">日程追加:</span>
-                <input 
-                  type="date" 
-                  className="border border-gray-300 rounded p-1.5 text-sm"
-                  value={editDate}
-                  onChange={(e) => setEditDate(e.target.value)}
-                />
-                <select 
-                  className="border border-gray-300 rounded p-1.5 text-sm bg-white"
-                  value={editTime}
-                  onChange={(e) => setEditTime(e.target.value)}
-                >
-                  {timeOptions.map(t => <option key={t} value={t}>{t}〜</option>)}
-                </select>
-                <button 
-                  onClick={addCandidate}
-                  disabled={!editDate}
-                  className="bg-orange-500 text-white px-4 py-1.5 rounded text-sm font-bold hover:bg-orange-600 disabled:opacity-50"
-                >
-                  追加
-                </button>
-              </div>
-              <p className="text-xs text-center text-orange-600 mt-2">※日程の削除は、下の表の列見出しにある「ゴミ箱」ボタンを押してください。</p>
-            </div>
+          {candidates.length > 0 ? (
+            <ul className="space-y-2">
+              {candidates.map((c, index) => (
+                <li key={index} className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border border-gray-100">
+                  <span className="font-medium text-gray-700">{c}</span>
+                  <button
+                    onClick={() => setCandidates(candidates.filter((_, i) => i !== index))}
+                    className="text-gray-400 hover:text-red-500 text-sm font-bold transition"
+                  >
+                    削除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-gray-400 text-center py-4 bg-white rounded-lg border border-dashed border-gray-300">
+              候補日がまだありません。<br/>上のフォームから追加してください。
+            </p>
           )}
-
-          {/* 出欠表 */}
-          <div className="overflow-x-auto pb-2">
-            <table className="w-full border-collapse text-sm min-w-max">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="p-3 text-left w-32 sm:w-40 sticky left-0 z-20 bg-gray-50 border-r border-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                    参加者 ({participants.length})
-                  </th>
-                  {event.candidates.map((c) => {
-                    const isBest = bestIds.includes(c.id);
-                    return (
-                      <th key={c.id} className={`p-2 text-center min-w-[90px] border-l border-white relative group ${
-                        isBest && !isEditMode ? "bg-yellow-100 text-yellow-900" : "bg-indigo-50 text-indigo-900"
-                      }`}>
-                        {isBest && !isEditMode && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-lg">👑</div>}
-                        
-                        {/* 編集モード時の削除ボタン */}
-                        {isEditMode && (
-                          <button 
-                            onClick={() => deleteCandidate(c.id)}
-                            className="absolute -top-2 -right-2 bg-red-500 text-white w-5 h-5 rounded-full flex items-center justify-center shadow-md hover:bg-red-600 z-10"
-                            title="この日程を削除"
-                          >
-                            ×
-                          </button>
-                        )}
-
-                        <div className="font-bold">{c.label.split(' ')[0]}</div>
-                        <div className="text-xs opacity-70">{c.label.split(' ')[1]}</div>
-                      </th>
-                    );
-                  })}
-                  <th className="p-3 text-left min-w-[200px] pl-4">コメント</th>
-                </tr>
-              </thead>
-              <tbody>
-                {participants.map((p) => (
-                  <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-3 font-bold text-gray-700 sticky left-0 z-10 bg-white border-r border-gray-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] truncate max-w-[120px]">
-                      {p.name}
-                    </td>
-                    {event.candidates.map((c) => {
-                      const isBest = bestIds.includes(c.id);
-                      return (
-                        <td key={c.id} className={`p-2 text-center border-l border-gray-100 ${isBest && !isEditMode ? "bg-yellow-50/30" : ""}`}>
-                          {renderSymbol(p.answers[c.id])}
-                        </td>
-                      );
-                    })}
-                    <td className="p-3 text-gray-500 pl-4 truncate max-w-[200px]">{p.comment}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {participants.length === 0 && <div className="p-8 text-center text-gray-400">まだ回答がありません</div>}
-          </div>
         </div>
 
-        {/* 下段：入力＆チャット */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
-          {/* 出欠入力 */}
-          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-            <h2 className="text-lg font-bold mb-4 pb-2 border-b">出欠を入力</h2>
-            <div className="space-y-4">
-              <input type="text" className="w-full border rounded p-2.5 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="お名前" value={name} onChange={(e) => setName(e.target.value)} />
-              
-              <div className="bg-gray-50 p-3 rounded-lg space-y-2 max-h-64 overflow-y-auto">
-                {event.candidates.map((c) => (
-                  <div key={c.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm">
-                    <span className="text-xs sm:text-sm font-bold text-indigo-900">{c.label}</span>
-                    <div className="flex gap-1">
-                      {[["o","◎"], ["t","△"], ["x","✕"]].map(([val, label]) => (
-                        <button key={val} onClick={() => setMyAnswers({ ...myAnswers, [c.id]: val })} 
-                          className={`w-8 h-8 rounded text-sm font-bold transition ${
-                            myAnswers[c.id] === val ? 
-                            (val==="o"?"bg-green-500 text-white":val==="t"?"bg-yellow-400 text-white":"bg-red-400 text-white") : "bg-gray-100 text-gray-400"
-                          }`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <input type="text" className="w-full border rounded p-2.5 outline-none" placeholder="コメント" value={comment} onChange={(e) => setComment(e.target.value)} />
-              <button onClick={submitAnswer} disabled={isSubmitting} className="w-full bg-indigo-600 text-white font-bold py-3 rounded hover:bg-indigo-700 disabled:opacity-50">回答を登録</button>
-            </div>
-          </div>
-
-          {/* チャット */}
-          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[500px]">
-            <h2 className="text-lg font-bold mb-4 pb-2 border-b">メッセージ</h2>
-            <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-2 bg-gray-50 rounded">
-              {messages.map((msg) => {
-                const isMe = msg.senderId === browserId;
-                return (
-                  <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-                    <div className="text-xs text-gray-400 mb-1">{msg.senderName}</div>
-                    <div className={`relative max-w-[85%] p-2 rounded-lg text-sm shadow-sm ${isMe ? "bg-indigo-600 text-white" : "bg-white border text-gray-800"}`}>
-                      {msg.text}
-                      {isMe && <button onClick={() => deleteMessage(msg.id)} className="absolute -top-2 -right-2 bg-gray-200 text-gray-500 rounded-full w-5 h-5 flex items-center justify-center text-xs">×</button>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex gap-2 pt-2 border-t">
-              <input type="text" placeholder="名前" className="w-1/3 border rounded p-2 text-sm" value={chatName} onChange={(e) => setChatName(e.target.value)} />
-              <input type="text" placeholder="送信する..." className="flex-1 border rounded p-2 text-sm" value={chatText} onChange={(e) => setChatText(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} />
-              <button onClick={sendMessage} className="bg-indigo-600 text-white px-3 rounded text-sm font-bold">送信</button>
-            </div>
-          </div>
-
-        </div>
+        <button
+          onClick={createEvent}
+          disabled={isSubmitting}
+          className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 shadow-lg hover:shadow-xl transition disabled:bg-gray-400 disabled:shadow-none transform hover:-translate-y-0.5"
+        >
+          {isSubmitting ? "イベントを作成中..." : "イベントを作成する"}
+        </button>
       </main>
     </div>
   );

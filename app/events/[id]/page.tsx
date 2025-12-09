@@ -9,6 +9,7 @@ import { doc, onSnapshot, collection, addDoc, deleteDoc, updateDoc, serverTimest
 type EventData = {
   title: string;
   detail: string;
+  fee: string;
   candidates: { id: number; label: string }[];
 };
 
@@ -16,6 +17,7 @@ type Participant = {
   id: string;
   name: string;
   comment: string;
+  hasPaid: boolean;
   answers: { [key: number]: string };
 };
 
@@ -31,7 +33,6 @@ export default function EventPage() {
   const params = useParams();
   const id = params.id as string;
 
-  // --- ステート管理 ---
   const [event, setEvent] = useState<EventData | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -40,19 +41,15 @@ export default function EventPage() {
   const [comment, setComment] = useState("");
   const [myAnswers, setMyAnswers] = useState<{ [key: number]: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [chatText, setChatText] = useState("");
   const [chatName, setChatName] = useState("");
   const [browserId, setBrowserId] = useState("");
-
   const [isUrlCopied, setIsUrlCopied] = useState(false);
-
-  // --- 編集モード用ステート ---
   const [isEditMode, setIsEditMode] = useState(false);
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("19:00");
+  const [editFee, setEditFee] = useState("");
 
-  // --- 30分刻みの時間リスト ---
   const timeOptions = [];
   for (let i = 0; i < 24; i++) {
     const hour = i.toString().padStart(2, "0");
@@ -60,7 +57,6 @@ export default function EventPage() {
     timeOptions.push(`${hour}:30`);
   }
 
-  // --- データ取得 ---
   useEffect(() => {
     if (!id) return;
     let myId = localStorage.getItem("chousei_browser_id");
@@ -71,7 +67,11 @@ export default function EventPage() {
     setBrowserId(myId);
 
     const unsubEvent = onSnapshot(doc(db, "events", id), (doc) => {
-      if (doc.exists()) setEvent(doc.data() as EventData);
+      if (doc.exists()) {
+        const data = doc.data() as EventData;
+        setEvent(data);
+        setEditFee(data.fee || "");
+      }
     });
 
     const qParticipants = query(collection(db, "events", id, "participants"), orderBy("created_at", "asc"));
@@ -87,8 +87,7 @@ export default function EventPage() {
     return () => { unsubEvent(); unsubParticipants(); unsubMessages(); };
   }, [id]);
 
-  // --- ヘルパー関数: ベスト日程のIDを取得 ---
-  const getBestCandidateIds = () => {
+  const bestIds = (() => {
     if (!event || participants.length === 0) return [];
     const scores: { [key: number]: number } = {};
     event.candidates.forEach((c) => {
@@ -100,84 +99,70 @@ export default function EventPage() {
     });
     const maxScore = Math.max(...Object.values(scores));
     return maxScore === 0 ? [] : event.candidates.filter((c) => scores[c.id] === maxScore).map((c) => c.id);
-  };
-  const bestIds = getBestCandidateIds();
+  })();
 
-  // --- 機能: URLコピー ---
   const copyUrl = () => {
     navigator.clipboard.writeText(window.location.href);
     setIsUrlCopied(true);
     setTimeout(() => setIsUrlCopied(false), 2000);
   };
 
-  // --- 日程追加機能 ---
+  const setAllAnswers = (val: string) => {
+    if (!event) return;
+    const newAnswers: { [key: number]: string } = {};
+    event.candidates.forEach(c => { newAnswers[c.id] = val; });
+    setMyAnswers(newAnswers);
+  };
+
+  const updateEventInfo = async () => {
+     if(!event) return;
+     try { await updateDoc(doc(db, "events", id), { fee: editFee }); } catch(e) { console.error(e); }
+  };
+
   const addCandidate = async () => {
     if (!editDate || !event) return;
-    
-    // 日付フォーマット作成
     const dateObj = new Date(editDate);
     const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
     const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()];
     const newLabel = `${dateStr}(${dayStr}) ${editTime}〜`;
-
-    // 新しいIDを生成（既存の最大ID + 1）
     const maxId = event.candidates.reduce((max, c) => Math.max(max, c.id), -1);
-    const newCandidate = { id: maxId + 1, label: newLabel };
-
-    // Firebase更新
-    try {
-      await updateDoc(doc(db, "events", id), {
-        candidates: [...event.candidates, newCandidate]
-      });
-      // フォームリセット
-      // setEditDate(""); // 連続入力をしやすくするためあえて消さない
-    } catch (e) {
-      alert("更新に失敗しました");
-    }
+    await updateDoc(doc(db, "events", id), {
+      candidates: [...event.candidates, { id: maxId + 1, label: newLabel }],
+      fee: editFee 
+    });
   };
 
-  // --- 日程削除機能 ---
-  const deleteCandidate = async (candidateId: number) => {
-    if (!event) return;
-    if (!confirm("この日程を削除しますか？\n（入力済みの回答は見えなくなります）")) return;
-
-    try {
-      const newCandidates = event.candidates.filter(c => c.id !== candidateId);
-      await updateDoc(doc(db, "events", id), {
-        candidates: newCandidates
-      });
-    } catch (e) {
-      alert("削除に失敗しました");
-    }
+  const deleteCandidate = async (cid: number) => {
+    if (!event || !confirm("削除しますか？")) return;
+    await updateDoc(doc(db, "events", id), {
+      candidates: event.candidates.filter(c => c.id !== cid)
+    });
   };
 
-  // --- DB操作 ---
+  const togglePayment = async (pid: string, currentStatus: boolean) => {
+    try { await updateDoc(doc(db, "events", id, "participants", pid), { hasPaid: !currentStatus }); } catch (e) { alert("更新に失敗しました"); }
+  };
+
+  const totalCollected = participants.filter(p => p.hasPaid).length * (parseInt(event?.fee || "0") || 0);
+
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
-    if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
+    if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全て回答してください");
     setIsSubmitting(true);
     try {
       await addDoc(collection(db, "events", id, "participants"), {
-        name, comment, answers: myAnswers, created_at: serverTimestamp(),
+        name, comment, answers: myAnswers, hasPaid: false, created_at: serverTimestamp(),
       });
       setName(""); setComment(""); setMyAnswers({}); setChatName(name);
-      alert("回答を登録しました！");
-    } catch { alert("エラーが発生しました"); } finally { setIsSubmitting(false); }
+      alert("登録しました！");
+    } catch { alert("エラー"); } finally { setIsSubmitting(false); }
   };
 
   const sendMessage = async () => {
     if (!chatText || !chatName) return;
-    try {
-      await addDoc(collection(db, "events", id, "messages"), {
-        text: chatText, senderName: chatName, senderId: browserId, createdAt: serverTimestamp(),
-      });
-      setChatText("");
-    } catch (e) { console.error(e); }
+    try { await addDoc(collection(db, "events", id, "messages"), { text: chatText, senderName: chatName, senderId: browserId, createdAt: serverTimestamp() }); setChatText(""); } catch (e) {}
   };
-
-  const deleteMessage = async (mid: string) => {
-    if (confirm("削除しますか？")) await deleteDoc(doc(db, "events", id, "messages", mid));
-  };
+  const deleteMessage = async (mid: string) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "events", id, "messages", mid)); };
 
   const renderSymbol = (s: string) => {
     if (s === "o") return <span className="text-green-500 font-bold text-lg">◎</span>;
@@ -192,30 +177,32 @@ export default function EventPage() {
     <div className="min-h-screen bg-gray-50 py-4 sm:py-8 px-2 sm:px-4 font-sans text-gray-800">
       <main className="max-w-5xl mx-auto space-y-6">
         
+        {/* ガイドエリア (New!) */}
+        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm shadow-sm">
+          <div className="flex items-start gap-3">
+             <div className="bg-white p-2 rounded-full shadow-sm text-xl">💡</div>
+             <div>
+               <h3 className="font-bold text-indigo-900">参加者の皆様へ</h3>
+               <p className="text-indigo-700 text-xs sm:text-sm mt-1">
+                 下のフォームから名前と出欠を入力してください。<br className="sm:hidden"/>「全部◎」ボタンを使うと入力が楽になります。
+               </p>
+             </div>
+          </div>
+          <div className="text-right hidden sm:block">
+            <p className="text-xs text-indigo-500">幹事の方へ: 右上の「✏️編集」から日程変更や会費設定が可能です</p>
+          </div>
+        </div>
+
         {/* ヘッダーカード */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
           
-          {/* 右上ボタンエリア */}
           <div className="absolute top-4 right-4 flex gap-2 z-30">
-            {/* 編集モード切替ボタン */}
-            <button
-              onClick={() => setIsEditMode(!isEditMode)}
-              className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm ${
-                isEditMode 
-                  ? "bg-orange-500 text-white hover:bg-orange-600 border border-orange-400" 
-                  : "bg-white/20 hover:bg-white/30 border border-white/40 text-white"
-              }`}
-            >
-              {isEditMode ? "完了" : "✏️ 日程編集"}
+            <button onClick={() => { if(isEditMode) updateEventInfo(); setIsEditMode(!isEditMode); }} className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm ${isEditMode ? "bg-orange-500 text-white border-orange-400" : "bg-white/20 hover:bg-white/30 border-white/40 text-white"}`}>
+              {isEditMode ? "完了" : "✏️ 編集"}
             </button>
-
-            {/* URLコピーボタン */}
             {!isEditMode && (
-              <button
-                onClick={copyUrl}
-                className="bg-white/20 hover:bg-white/30 border border-white/40 text-white px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm"
-              >
-                {isUrlCopied ? "✨ コピー完了" : "🔗 URLをコピー"}
+              <button onClick={copyUrl} className="bg-white/20 hover:bg-white/30 border border-white/40 text-white px-3 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 backdrop-blur-sm shadow-sm">
+                {isUrlCopied ? "✨ 完了" : "🔗 共有"}
               </button>
             )}
           </div>
@@ -223,39 +210,36 @@ export default function EventPage() {
           <div className="bg-indigo-600 p-6 text-white">
             <h1 className="text-2xl font-bold pr-32">{event.title}</h1>
             <p className="mt-2 opacity-90 whitespace-pre-wrap text-sm">{event.detail}</p>
+            
+            <div className="mt-4 flex flex-wrap items-center gap-4 bg-indigo-700/50 p-3 rounded-lg backdrop-blur-sm inline-flex">
+              <div className="text-sm font-bold flex items-center gap-2">
+                <span>💰 会費:</span>
+                {isEditMode ? (
+                  <input type="number" className="text-gray-800 w-24 px-2 py-1 rounded text-sm outline-none" placeholder="3000" value={editFee} onChange={(e) => setEditFee(e.target.value)} />
+                ) : (
+                  <span className="text-lg">{event.fee ? `${parseInt(event.fee).toLocaleString()}円` : "未定"}</span>
+                )}
+              </div>
+              {!isEditMode && event.fee && (
+                <div className="text-sm border-l border-indigo-400 pl-4">
+                  集金合計: <span className="font-bold text-yellow-300 text-lg">{totalCollected.toLocaleString()}円</span> 
+                  <span className="opacity-75 text-xs ml-1">({participants.filter(p=>p.hasPaid).length}人済)</span>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* 編集モード時の追加フォーム */}
           {isEditMode && (
-            <div className="bg-orange-50 p-4 border-b border-orange-100 animate-fadeIn">
-              <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
-                <span className="font-bold text-orange-800 text-sm">日程追加:</span>
-                <input 
-                  type="date" 
-                  className="border border-gray-300 rounded p-1.5 text-sm"
-                  value={editDate}
-                  onChange={(e) => setEditDate(e.target.value)}
-                />
-                <select 
-                  className="border border-gray-300 rounded p-1.5 text-sm bg-white"
-                  value={editTime}
-                  onChange={(e) => setEditTime(e.target.value)}
-                >
-                  {timeOptions.map(t => <option key={t} value={t}>{t}〜</option>)}
-                </select>
-                <button 
-                  onClick={addCandidate}
-                  disabled={!editDate}
-                  className="bg-orange-500 text-white px-4 py-1.5 rounded text-sm font-bold hover:bg-orange-600 disabled:opacity-50"
-                >
-                  追加
-                </button>
-              </div>
-              <p className="text-xs text-center text-orange-600 mt-2">※日程の削除は、下の表の列見出しにある「ゴミ箱」ボタンを押してください。</p>
+            <div className="bg-orange-50 p-4 border-b border-orange-100 flex flex-col sm:flex-row gap-2 items-center justify-center animate-fadeIn">
+              <span className="font-bold text-orange-800 text-sm">日程追加:</span>
+              <input type="date" className="border rounded p-1.5 text-sm" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+              <select className="border rounded p-1.5 text-sm bg-white" value={editTime} onChange={(e) => setEditTime(e.target.value)}>
+                {timeOptions.map(t => <option key={t} value={t}>{t}〜</option>)}
+              </select>
+              <button onClick={addCandidate} disabled={!editDate} className="bg-orange-500 text-white px-4 py-1.5 rounded text-sm font-bold">追加</button>
             </div>
           )}
 
-          {/* 出欠表 */}
           <div className="overflow-x-auto pb-2">
             <table className="w-full border-collapse text-sm min-w-max">
               <thead>
@@ -263,25 +247,13 @@ export default function EventPage() {
                   <th className="p-3 text-left w-32 sm:w-40 sticky left-0 z-20 bg-gray-50 border-r border-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                     参加者 ({participants.length})
                   </th>
+                  <th className="p-2 text-center w-16 bg-gray-50 border-r border-gray-200 text-gray-500 text-xs">支払</th>
                   {event.candidates.map((c) => {
                     const isBest = bestIds.includes(c.id);
                     return (
-                      <th key={c.id} className={`p-2 text-center min-w-[90px] border-l border-white relative group ${
-                        isBest && !isEditMode ? "bg-yellow-100 text-yellow-900" : "bg-indigo-50 text-indigo-900"
-                      }`}>
+                      <th key={c.id} className={`p-2 text-center min-w-[90px] border-l border-white relative ${isBest && !isEditMode ? "bg-yellow-100 text-yellow-900" : "bg-indigo-50 text-indigo-900"}`}>
                         {isBest && !isEditMode && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-lg">👑</div>}
-                        
-                        {/* 編集モード時の削除ボタン */}
-                        {isEditMode && (
-                          <button 
-                            onClick={() => deleteCandidate(c.id)}
-                            className="absolute -top-2 -right-2 bg-red-500 text-white w-5 h-5 rounded-full flex items-center justify-center shadow-md hover:bg-red-600 z-10"
-                            title="この日程を削除"
-                          >
-                            ×
-                          </button>
-                        )}
-
+                        {isEditMode && <button onClick={() => deleteCandidate(c.id)} className="absolute -top-2 -right-2 bg-red-500 text-white w-5 h-5 rounded-full flex items-center justify-center shadow-md z-10">×</button>}
                         <div className="font-bold">{c.label.split(' ')[0]}</div>
                         <div className="text-xs opacity-70">{c.label.split(' ')[1]}</div>
                       </th>
@@ -295,6 +267,9 @@ export default function EventPage() {
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="p-3 font-bold text-gray-700 sticky left-0 z-10 bg-white border-r border-gray-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] truncate max-w-[120px]">
                       {p.name}
+                    </td>
+                    <td className="p-2 text-center border-r border-gray-100">
+                      <button onClick={() => togglePayment(p.id, p.hasPaid)} className={`w-8 h-8 rounded-full flex items-center justify-center transition ${p.hasPaid ? "bg-green-100 text-green-600 border border-green-200" : "bg-gray-100 text-gray-300 hover:bg-gray-200"}`}>¥</button>
                     </td>
                     {event.candidates.map((c) => {
                       const isBest = bestIds.includes(c.id);
@@ -313,40 +288,35 @@ export default function EventPage() {
           </div>
         </div>
 
-        {/* 下段：入力＆チャット */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
-          {/* 出欠入力 */}
           <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
             <h2 className="text-lg font-bold mb-4 pb-2 border-b">出欠を入力</h2>
             <div className="space-y-4">
               <input type="text" className="w-full border rounded p-2.5 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="お名前" value={name} onChange={(e) => setName(e.target.value)} />
               
+              <div className="flex gap-2 mb-2">
+                <button onClick={() => setAllAnswers("o")} className="flex-1 bg-green-50 text-green-700 border border-green-200 rounded py-2 text-xs font-bold hover:bg-green-100 transition">全部 ◎</button>
+                <button onClick={() => setAllAnswers("t")} className="flex-1 bg-yellow-50 text-yellow-700 border border-yellow-200 rounded py-2 text-xs font-bold hover:bg-yellow-100 transition">全部 △</button>
+                <button onClick={() => setAllAnswers("x")} className="flex-1 bg-red-50 text-red-700 border border-red-200 rounded py-2 text-xs font-bold hover:bg-red-100 transition">全部 ✕</button>
+              </div>
+
               <div className="bg-gray-50 p-3 rounded-lg space-y-2 max-h-64 overflow-y-auto">
                 {event.candidates.map((c) => (
                   <div key={c.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm">
                     <span className="text-xs sm:text-sm font-bold text-indigo-900">{c.label}</span>
                     <div className="flex gap-1">
                       {[["o","◎"], ["t","△"], ["x","✕"]].map(([val, label]) => (
-                        <button key={val} onClick={() => setMyAnswers({ ...myAnswers, [c.id]: val })} 
-                          className={`w-8 h-8 rounded text-sm font-bold transition ${
-                            myAnswers[c.id] === val ? 
-                            (val==="o"?"bg-green-500 text-white":val==="t"?"bg-yellow-400 text-white":"bg-red-400 text-white") : "bg-gray-100 text-gray-400"
-                          }`}>
-                          {label}
-                        </button>
+                        <button key={val} onClick={() => setMyAnswers({ ...myAnswers, [c.id]: val })} className={`w-8 h-8 rounded text-sm font-bold transition ${myAnswers[c.id] === val ? (val==="o"?"bg-green-500 text-white":val==="t"?"bg-yellow-400 text-white":"bg-red-400 text-white") : "bg-gray-100 text-gray-400"}`}>{label}</button>
                       ))}
                     </div>
                   </div>
                 ))}
               </div>
-
               <input type="text" className="w-full border rounded p-2.5 outline-none" placeholder="コメント" value={comment} onChange={(e) => setComment(e.target.value)} />
               <button onClick={submitAnswer} disabled={isSubmitting} className="w-full bg-indigo-600 text-white font-bold py-3 rounded hover:bg-indigo-700 disabled:opacity-50">回答を登録</button>
             </div>
           </div>
 
-          {/* チャット */}
           <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[500px]">
             <h2 className="text-lg font-bold mb-4 pb-2 border-b">メッセージ</h2>
             <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-2 bg-gray-50 rounded">
@@ -365,11 +335,10 @@ export default function EventPage() {
             </div>
             <div className="flex gap-2 pt-2 border-t">
               <input type="text" placeholder="名前" className="w-1/3 border rounded p-2 text-sm" value={chatName} onChange={(e) => setChatName(e.target.value)} />
-              <input type="text" placeholder="送信する..." className="flex-1 border rounded p-2 text-sm" value={chatText} onChange={(e) => setChatText(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} />
+              <input type="text" placeholder="送信" className="flex-1 border rounded p-2 text-sm" value={chatText} onChange={(e) => setChatText(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} />
               <button onClick={sendMessage} className="bg-indigo-600 text-white px-3 rounded text-sm font-bold">送信</button>
             </div>
           </div>
-
         </div>
       </main>
     </div>
