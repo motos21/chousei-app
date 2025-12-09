@@ -23,7 +23,7 @@ type Message = {
   id: string;
   text: string;
   senderName: string;
-  senderId: string; // ブラウザID（本人確認用）
+  senderId: string;
   createdAt: any;
 };
 
@@ -47,11 +47,14 @@ export default function EventPage() {
   const [chatName, setChatName] = useState("");
   const [browserId, setBrowserId] = useState("");
 
+  // URLコピー成功フラグ
+  const [isCopied, setIsCopied] = useState(false);
+
   // --- 1. 初期化 & データ監視 ---
   useEffect(() => {
     if (!id) return;
 
-    // ブラウザIDの生成・取得（これで「自分」を識別します）
+    // ブラウザID取得
     let myId = localStorage.getItem("chousei_browser_id");
     if (!myId) {
       myId = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -59,20 +62,20 @@ export default function EventPage() {
     }
     setBrowserId(myId);
 
-    // A. イベント情報の取得
+    // イベント情報取得
     const unsubEvent = onSnapshot(doc(db, "events", id), (doc) => {
       if (doc.exists()) {
         setEvent(doc.data() as EventData);
       }
     });
 
-    // B. 参加者リストの取得
+    // 参加者リスト取得
     const qParticipants = query(collection(db, "events", id, "participants"), orderBy("created_at", "asc"));
     const unsubParticipants = onSnapshot(qParticipants, (snapshot) => {
       setParticipants(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Participant[]);
     });
 
-    // C. チャットメッセージの取得（ここを追加！）
+    // メッセージ取得
     const qMessages = query(collection(db, "events", id, "messages"), orderBy("createdAt", "asc"));
     const unsubMessages = onSnapshot(qMessages, (snapshot) => {
       setMessages(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
@@ -85,6 +88,42 @@ export default function EventPage() {
     };
   }, [id]);
 
+  // --- 機能: URLコピー ---
+  const copyUrl = () => {
+    const url = window.location.href;
+    navigator.clipboard.writeText(url);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000); // 2秒後に戻す
+  };
+
+  // --- 機能: ベスト日程の計算 ---
+  const getBestCandidateIds = () => {
+    if (!event || participants.length === 0) return [];
+    
+    // スコア計算 (o=2, t=1, x=0)
+    const scores: { [key: number]: number } = {};
+    
+    event.candidates.forEach((c) => {
+      scores[c.id] = 0; // 初期化
+      participants.forEach((p) => {
+        const status = p.answers[c.id];
+        if (status === "o") scores[c.id] += 2;
+        if (status === "t") scores[c.id] += 1;
+      });
+    });
+
+    // 最高得点を見つける
+    const maxScore = Math.max(...Object.values(scores));
+    if (maxScore === 0) return []; // 全員✕ならハイライトしない
+
+    // 最高得点のIDリストを返す
+    return event.candidates
+      .filter((c) => scores[c.id] === maxScore)
+      .map((c) => c.id);
+  };
+
+  const bestIds = getBestCandidateIds();
+
   // --- 出欠送信 ---
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
@@ -96,7 +135,6 @@ export default function EventPage() {
         name, comment, answers: myAnswers, created_at: serverTimestamp(),
       });
       setName(""); setComment(""); setMyAnswers({});
-      // チャット欄の名前も自動で埋めておく（親切機能）
       setChatName(name);
       alert("回答を登録しました！");
     } catch (e) {
@@ -113,25 +151,20 @@ export default function EventPage() {
 
     try {
       await addDoc(collection(db, "events", id, "messages"), {
-        text: chatText,
-        senderName: chatName,
-        senderId: browserId, // ここで自分のIDを添付
-        createdAt: serverTimestamp(),
+        text: chatText, senderName: chatName, senderId: browserId, createdAt: serverTimestamp(),
       });
-      setChatText(""); // 送信後にフォームを空にする
+      setChatText("");
     } catch (e) {
       console.error(e);
     }
   };
 
-  // --- チャット削除 ---
   const deleteMessage = async (messageId: string) => {
     if (confirm("このメッセージを削除しますか？")) {
       await deleteDoc(doc(db, "events", id, "messages", messageId));
     }
   };
 
-  // --- UIヘルパー ---
   const renderSymbol = (status: string) => {
     if (status === "o") return <span className="text-green-500 font-bold text-lg">◎</span>;
     if (status === "t") return <span className="text-yellow-500 font-bold text-lg">△</span>;
@@ -146,9 +179,22 @@ export default function EventPage() {
       <main className="max-w-5xl mx-auto space-y-8">
         
         {/* イベント詳細カード */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-indigo-600 p-6 text-white">
-            <h1 className="text-2xl font-bold">{event.title}</h1>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
+          
+          {/* URLコピーボタン (右上) */}
+          <button
+            onClick={copyUrl}
+            className="absolute top-4 right-4 bg-white/20 hover:bg-white/30 border border-white/40 text-white px-3 py-1.5 rounded-full text-sm font-bold flex items-center gap-2 transition backdrop-blur-sm shadow-sm"
+          >
+            {isCopied ? (
+              <><span>✨</span> コピーしました！</>
+            ) : (
+              <><span>🔗</span> 共有URLをコピー</>
+            )}
+          </button>
+
+          <div className="bg-indigo-600 p-8 text-white">
+            <h1 className="text-3xl font-bold pr-32">{event.title}</h1>
             <p className="mt-2 opacity-90 whitespace-pre-wrap">{event.detail}</p>
           </div>
 
@@ -157,11 +203,18 @@ export default function EventPage() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="p-3 text-left w-40">参加者</th>
-                  {event.candidates.map((c) => (
-                    <th key={c.id} className="p-3 text-center min-w-[80px] bg-indigo-50/50 text-indigo-900 border-l border-white">
-                      {c.label}
-                    </th>
-                  ))}
+                  {event.candidates.map((c) => {
+                    const isBest = bestIds.includes(c.id);
+                    return (
+                      <th key={c.id} className={`p-3 text-center min-w-[80px] border-l border-white relative transition-colors ${
+                        isBest ? "bg-yellow-100 text-yellow-900 ring-2 ring-yellow-400 ring-inset" : "bg-indigo-50/50 text-indigo-900"
+                      }`}>
+                        {/* ベスト日程には王冠マークをつける */}
+                        {isBest && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-xl">👑</div>}
+                        <div className={isBest ? "font-extrabold mt-1" : ""}>{c.label}</div>
+                      </th>
+                    );
+                  })}
                   <th className="p-3 text-left w-64 pl-6">コメント</th>
                 </tr>
               </thead>
@@ -169,11 +222,14 @@ export default function EventPage() {
                 {participants.map((p) => (
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="p-3 font-bold text-gray-700">{p.name}</td>
-                    {event.candidates.map((c) => (
-                      <td key={c.id} className="p-3 text-center border-l border-gray-100">
-                        {renderSymbol(p.answers[c.id])}
-                      </td>
-                    ))}
+                    {event.candidates.map((c) => {
+                      const isBest = bestIds.includes(c.id);
+                      return (
+                        <td key={c.id} className={`p-3 text-center border-l border-gray-100 ${isBest ? "bg-yellow-50/50" : ""}`}>
+                          {renderSymbol(p.answers[c.id])}
+                        </td>
+                      );
+                    })}
                     <td className="p-3 text-gray-500 pl-6">{p.comment}</td>
                   </tr>
                 ))}
@@ -183,7 +239,7 @@ export default function EventPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* 左カラム: 出欠入力フォーム */}
+          {/* 左カラム: 出欠入力 */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
             <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">出欠を入力</h2>
             
@@ -249,13 +305,12 @@ export default function EventPage() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[500px]">
             <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">メッセージボード</h2>
             
-            {/* メッセージ表示エリア */}
             <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-2 bg-gray-50 rounded-lg">
               {messages.length === 0 && (
                 <p className="text-center text-gray-400 text-sm mt-10">まだメッセージはありません。<br/>何か書き込んでみましょう！</p>
               )}
               {messages.map((msg) => {
-                const isMe = msg.senderId === browserId; // 自分の投稿か判定
+                const isMe = msg.senderId === browserId;
                 return (
                   <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
                     <div className="text-xs text-gray-500 mb-1 px-1">{msg.senderName}</div>
@@ -263,7 +318,6 @@ export default function EventPage() {
                       isMe ? "bg-indigo-600 text-white rounded-br-none" : "bg-white border border-gray-200 rounded-bl-none text-gray-800"
                     }`}>
                       {msg.text}
-                      {/* 自分の投稿だけ削除ボタンを表示 */}
                       {isMe && (
                         <button 
                           onClick={() => deleteMessage(msg.id)}
@@ -278,7 +332,6 @@ export default function EventPage() {
               })}
             </div>
 
-            {/* 送信エリア */}
             <div className="space-y-2 pt-2 border-t">
               <div className="flex gap-2">
                 <input
