@@ -54,6 +54,9 @@ export default function EventPage() {
   const [comment, setComment] = useState("");
   const [myAnswers, setMyAnswers] = useState<{ [key: number]: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // ★追加: 編集モード管理用（自分のIDを保持）
+  const [myParticipantId, setMyParticipantId] = useState<string | null>(null);
 
   // チャット用
   const [chatText, setChatText] = useState("");
@@ -79,12 +82,19 @@ export default function EventPage() {
   useEffect(() => {
     if (!id) return;
 
+    // ブラウザ識別ID (チャット用)
     let myId = localStorage.getItem("chousei_browser_id");
     if (!myId) {
       myId = Math.random().toString(36).substring(2) + Date.now().toString(36);
       localStorage.setItem("chousei_browser_id", myId);
     }
     setBrowserId(myId);
+
+    // ★追加: このイベントでの自分の参加者IDがあれば取得
+    const storedPid = localStorage.getItem(`chousei_pid_${id}`);
+    if (storedPid) {
+      setMyParticipantId(storedPid);
+    }
 
     const unsubEvent = onSnapshot(doc(db, "events", id), (d) => { 
         if (d.exists()) {
@@ -111,6 +121,23 @@ export default function EventPage() {
 
     return () => { unsubEvent(); unsubParticipants(); unsubMessages(); };
   }, [id]);
+
+  // ★追加: 参加者データが読み込まれたら、自分の既存データをフォームにセット
+  useEffect(() => {
+    if (myParticipantId && participants.length > 0) {
+      const myData = participants.find(p => p.id === myParticipantId);
+      if (myData) {
+        // フォームに反映（まだ編集していない場合のみ、あるいは強制同期）
+        // ここではUX向上のため、ロード時に反映させます
+        setName(prev => prev || myData.name);
+        setComment(prev => prev || myData.comment);
+        setMyAnswers(prev => Object.keys(prev).length === 0 ? myData.answers : prev);
+        // チャットネームも初期値として入れておく
+        setChatName(prev => prev || myData.name);
+      }
+    }
+  }, [myParticipantId, participants]);
+
 
   // --- ロジック ---
   const bestIds = (() => {
@@ -179,25 +206,53 @@ export default function EventPage() {
     } 
   };
 
+  // ★修正: 登録または更新を行う
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
     if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
+    
     setIsSubmitting(true);
-    try { 
-      await addDoc(collection(db, "events", id, "participants"), { 
-        name, 
-        comment, 
-        answers: myAnswers, 
-        hasPaid: false, 
-        created_at: serverTimestamp(), 
-      }); 
-      setName(""); setComment(""); setMyAnswers({}); setChatName(name);
-      alert("登録しました！"); 
+    try {
+      if (myParticipantId) {
+        // --- 更新モード (UPDATE) ---
+        await updateDoc(doc(db, "events", id, "participants", myParticipantId), {
+          name,
+          comment,
+          answers: myAnswers,
+          // created_at は更新しない
+        });
+        alert("回答を更新しました！");
+      } else {
+        // --- 新規登録モード (CREATE) ---
+        const docRef = await addDoc(collection(db, "events", id, "participants"), { 
+          name, 
+          comment, 
+          answers: myAnswers, 
+          hasPaid: false, 
+          created_at: serverTimestamp(), 
+        });
+        // IDをブラウザに保存
+        localStorage.setItem(`chousei_pid_${id}`, docRef.id);
+        setMyParticipantId(docRef.id);
+        
+        setName(""); setComment(""); setMyAnswers({}); setChatName(name);
+        alert("登録しました！"); 
+      }
     } catch (e: any) { 
       alert("送信エラー: " + e.message); 
     } finally { 
       setIsSubmitting(false); 
     }
+  };
+
+  // ★追加: 新規ユーザーとしてリセットする機能
+  const resetForm = () => {
+    if(!confirm("フォームをクリアして新規作成しますか？")) return;
+    setMyParticipantId(null);
+    localStorage.removeItem(`chousei_pid_${id}`);
+    setName("");
+    setComment("");
+    setMyAnswers({});
   };
 
   const sendMessage = async () => { 
@@ -299,32 +354,35 @@ export default function EventPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {participants.map((p) => (
-                    <tr key={p.id} className="border-b border-white hover:bg-[#161616] transition group">
-                      <td className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px]">
-                        <div className="flex items-center justify-between gap-2">
-                          <span>{p.name}</span>
-                          {isEditMode && (
-                            <button 
-                              onClick={() => togglePayment(p.id, p.hasPaid)}
-                              className={`text-[10px] px-2 py-0.5 border ${p.hasPaid ? "bg-cyan-900 text-cyan-300 border-cyan-500" : "bg-[#222] text-slate-500 border-slate-700"}`}
-                            >
-                              {p.hasPaid ? "¥ PAID" : "¥ UNPAID"}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      {event.candidates.map((c) => {
-                        const isBest = bestIds.includes(c.id);
-                        return (
-                          <td key={c.id} className={`p-2 text-center border-l border-white ${isBest && !isEditMode ? "bg-cyan-900/10" : ""}`}>
-                            {renderSymbol(p.answers[c.id])}
-                          </td>
-                        );
-                      })}
-                      <td className="p-4 text-slate-500 pl-6 truncate max-w-[200px] font-mono text-xs border-l border-white">{p.comment}</td>
-                    </tr>
-                  ))}
+                  {participants.map((p) => {
+                    const isMyRow = p.id === myParticipantId; // 自分の行かどうか
+                    return (
+                      <tr key={p.id} className={`border-b border-white transition group ${isMyRow ? "bg-cyan-900/10" : "hover:bg-[#161616]"}`}>
+                        <td className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={isMyRow ? "text-cyan-400" : ""}>{p.name} {isMyRow && "(YOU)"}</span>
+                            {isEditMode && (
+                              <button 
+                                onClick={() => togglePayment(p.id, p.hasPaid)}
+                                className={`text-[10px] px-2 py-0.5 border ${p.hasPaid ? "bg-cyan-900 text-cyan-300 border-cyan-500" : "bg-[#222] text-slate-500 border-slate-700"}`}
+                              >
+                                {p.hasPaid ? "¥ PAID" : "¥ UNPAID"}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        {event.candidates.map((c) => {
+                          const isBest = bestIds.includes(c.id);
+                          return (
+                            <td key={c.id} className={`p-2 text-center border-l border-white ${isBest && !isEditMode ? "bg-cyan-900/10" : ""}`}>
+                              {renderSymbol(p.answers[c.id])}
+                            </td>
+                          );
+                        })}
+                        <td className="p-4 text-slate-500 pl-6 truncate max-w-[200px] font-mono text-xs border-l border-white">{p.comment}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               {participants.length === 0 && <div className="p-12 text-center text-slate-600 font-mono text-xs tracking-widest uppercase">No participants yet / まだ参加者がいません</div>}
@@ -335,9 +393,20 @@ export default function EventPage() {
           <div className="lg:col-span-4 space-y-10">
             
             {/* 入力フォーム */}
-            <div className="bg-[#111] p-8 border border-white hover:border-cyan-500 transition duration-300">
-              <h2 className="text-white font-black text-xl mb-1 uppercase tracking-wider">Your Entry</h2>
-              <p className="text-slate-500 text-xs mb-6 font-bold">出欠を入力してください</p>
+            <div className={`bg-[#111] p-8 border hover:border-cyan-500 transition duration-300 ${myParticipantId ? "border-cyan-500 shadow-[0_0_15px_rgba(8,145,178,0.2)]" : "border-white"}`}>
+              <div className="flex justify-between items-end mb-1">
+                <h2 className={`font-black text-xl uppercase tracking-wider ${myParticipantId ? "text-cyan-400" : "text-white"}`}>
+                  {myParticipantId ? "Edit Your Entry" : "New Entry"}
+                </h2>
+                {myParticipantId && (
+                  <button onClick={resetForm} className="text-[10px] text-slate-500 underline hover:text-white">
+                    Not you? Reset
+                  </button>
+                )}
+              </div>
+              <p className="text-slate-500 text-xs mb-6 font-bold">
+                {myParticipantId ? "登録済みです。内容を変更できます。" : "出欠を入力してください"}
+              </p>
               
               <div className="space-y-6">
                 <div>
@@ -372,8 +441,8 @@ export default function EventPage() {
                    <input type="text" className="w-full bg-[#000] border-2 border-white p-4 text-white placeholder-slate-500 focus:border-cyan-500 outline-none transition-colors" placeholder="遅れます等..." value={comment} onChange={(e) => setComment(e.target.value)} />
                 </div>
                 
-                <button onClick={submitAnswer} disabled={isSubmitting} className="w-full bg-cyan-600 text-black font-black text-lg py-5 hover:bg-cyan-500 transition shadow-[0_0_20px_rgba(8,145,178,0.2)] disabled:opacity-50 tracking-widest uppercase border border-white">
-                  SUBMIT ENTRY
+                <button onClick={submitAnswer} disabled={isSubmitting} className={`w-full font-black text-lg py-5 transition shadow-[0_0_20px_rgba(8,145,178,0.2)] disabled:opacity-50 tracking-widest uppercase border border-white ${myParticipantId ? "bg-cyan-800 text-white hover:bg-cyan-700" : "bg-cyan-600 text-black hover:bg-cyan-500"}`}>
+                  {isSubmitting ? "PROCESSING..." : (myParticipantId ? "UPDATE ENTRY" : "SUBMIT ENTRY")}
                 </button>
               </div>
             </div>
@@ -398,37 +467,42 @@ export default function EventPage() {
                 })}
               </div>
 
-              {/* チャット入力エリア (修正版) */}
+              {/* チャット入力エリア */}
               <div className="pt-6 border-t border-white space-y-4">
                 <div>
-                   <label className="block text-pink-500 text-[10px] font-black uppercase tracking-widest mb-2">Chat Name / お名前</label>
+                   <label className="block text-pink-500 text-xs font-black uppercase tracking-widest mb-2">
+                     Your Name / お名前 <span className="text-slate-500 text-[10px] ml-2">(必須)</span>
+                   </label>
                    <input 
                      type="text" 
-                     placeholder="名前を入力" 
+                     placeholder="例: 田中" 
                      className="w-full bg-[#000] border border-white p-3 text-sm text-white focus:border-pink-500 outline-none placeholder-slate-600 transition-colors" 
                      value={chatName} 
                      onChange={(e) => setChatName(e.target.value)} 
                    />
                 </div>
-                
-                <div className="flex gap-0 border border-white">
-                  <input 
-                    type="text" 
-                    placeholder="メッセージを入力..." 
-                    className="flex-1 bg-[#000] p-4 text-sm text-white outline-none placeholder-slate-600" 
-                    value={chatText} 
-                    onChange={(e) => setChatText(e.target.value)} 
-                    onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} 
-                  />
-                  <button 
-                    onClick={sendMessage} 
-                    className="bg-pink-600 text-black px-6 font-black hover:bg-pink-500 transition uppercase text-xs tracking-widest border-l border-white"
-                  >
-                    SEND
-                  </button>
+                <div>
+                  <label className="block text-slate-500 text-[10px] font-black uppercase tracking-widest mb-2">
+                    Message
+                  </label>
+                  <div className="flex gap-0 border border-white">
+                    <input 
+                      type="text" 
+                      placeholder="メッセージを入力..." 
+                      className="flex-1 bg-[#000] p-4 text-sm text-white outline-none placeholder-slate-600 focus:bg-[#1a1a1a] transition-colors" 
+                      value={chatText} 
+                      onChange={(e) => setChatText(e.target.value)} 
+                      onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} 
+                    />
+                    <button 
+                      onClick={sendMessage} 
+                      className="bg-pink-600 text-black px-6 font-black hover:bg-pink-500 transition uppercase text-xs tracking-widest border-l border-white"
+                    >
+                      SEND
+                    </button>
+                  </div>
                 </div>
               </div>
-
             </div>
 
           </div>
