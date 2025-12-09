@@ -87,6 +87,13 @@ export default function EventPage() {
     }
     setBrowserId(myId);
 
+    // ★以前入力した名前があれば復元する（修正ポイント）
+    const savedName = localStorage.getItem("chousei_user_name");
+    if (savedName) {
+      setName(savedName);
+      setChatName(savedName);
+    }
+
     // 1. イベント情報の取得
     const unsubEvent = onSnapshot(doc(db, "events", id), (d) => { 
         if (d.exists()) {
@@ -208,10 +215,13 @@ export default function EventPage() {
         created_at: serverTimestamp(), 
       }); 
       
+      // ★送信成功時に名前を保存して、チャット欄にも反映（修正ポイント）
+      localStorage.setItem("chousei_user_name", name);
+      setChatName(name);
+
       setName(""); 
       setComment(""); 
       setMyAnswers({}); 
-      setChatName(name); // チャットの名前も同期
       alert("登録しました！"); 
     } catch (e: any) { 
       console.error(e);
@@ -221,19 +231,29 @@ export default function EventPage() {
     }
   };
 
-  // チャット送信
+  // チャット送信（大幅修正済み）
   const sendMessage = async () => { 
     if (!chatText) return;
-    if (!chatName) return alert("チャット用の名前を入力してください");
+
+    // ★修正: チャット欄の名前が空なら、メインの名前欄を使う
+    const sender = chatName || name;
+
+    if (!sender) return alert("名前を入力してください");
 
     try { 
       await addDoc(collection(db, "events", id, "messages"), { 
         text: chatText, 
-        senderName: chatName, 
+        senderName: sender, 
         senderId: browserId, 
         createdAt: serverTimestamp() 
       }); 
+      
       setChatText(""); 
+      
+      // ★追加: 名前を保存して次回入力を楽にする
+      setChatName(sender);
+      localStorage.setItem("chousei_user_name", sender);
+
     } catch (e: any) {
       console.error(e);
       alert("チャット送信エラー: " + e.message);
@@ -327,7 +347,7 @@ export default function EventPage() {
                       <td className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px]">
                         <div className="flex items-center justify-between gap-2">
                           <span>{p.name}</span>
-                          {/* 編集モード時の集金ボタン (ここに追加しました) */}
+                          {/* 編集モード時の集金ボタン */}
                           {isEditMode && (
                             <button 
                               onClick={() => togglePayment(p.id, p.hasPaid)}
