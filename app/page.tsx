@@ -2,11 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-// 履歴用データ型
 type HistoryItem = { id: string; title: string; visitedAt: number };
 
 export default function Home() {
@@ -16,9 +15,20 @@ export default function Home() {
   const [detail, setDetail] = useState("");
   const [candidates, setCandidates] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedDate, setSelectedDate] = useState("");
-  const [selectedTime, setSelectedTime] = useState("19:00");
   const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  // --- 追加モード管理 ---
+  const [addMode, setAddMode] = useState<"single" | "range">("single");
+  
+  // 単発用
+  const [singleDate, setSingleDate] = useState("");
+  
+  // 期間用
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+
+  // 共通の時間
+  const [selectedTime, setSelectedTime] = useState("19:00");
 
   const timeOptions = [];
   for (let i = 0; i < 24; i++) {
@@ -27,29 +37,53 @@ export default function Home() {
     timeOptions.push(`${hour}:30`);
   }
 
-  // --- 閲覧履歴の読み込み ---
   useEffect(() => {
     const loadHistory = async () => {
       const stored = localStorage.getItem("chousei_history");
       if (stored) {
-        // IDだけでなくタイトルも最新状態にするため、必要ならここでDBから再取得も可能だが
-        // シンプルにするためlocalStorageの値をそのまま使う（または保存時にタイトルも含める）
         const items: HistoryItem[] = JSON.parse(stored);
-        setHistory(items.sort((a, b) => b.visitedAt - a.visitedAt).slice(0, 5)); // 最新5件
+        setHistory(items.sort((a, b) => b.visitedAt - a.visitedAt).slice(0, 5));
       }
     };
     loadHistory();
   }, []);
 
-  const addCandidate = () => {
-    if (!selectedDate) return;
-    const dateObj = new Date(selectedDate);
+  // --- 単発追加 ---
+  const addSingleCandidate = () => {
+    if (!singleDate) return;
+    const dateObj = new Date(singleDate);
     const dateStr = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
     const dayStr = ["日", "月", "火", "水", "木", "金", "土"][dateObj.getDay()];
     const newCandidate = `${dateStr}(${dayStr}) ${selectedTime}〜`;
+    
     if (!candidates.includes(newCandidate)) {
       setCandidates([...candidates, newCandidate]);
     }
+  };
+
+  // --- 期間一括追加 ---
+  const addRangeCandidates = () => {
+    if (!startDate || !endDate) return;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    // 日付が逆転していたら入れ替え
+    if (start > end) {
+      alert("開始日が終了日より後になっています");
+      return;
+    }
+
+    const newItems: string[] = [];
+    // startからendまでループ
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+       const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+       const dayStr = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+       const candidate = `${dateStr}(${dayStr}) ${selectedTime}〜`;
+       if (!candidates.includes(candidate) && !newItems.includes(candidate)) {
+         newItems.push(candidate);
+       }
+    }
+    setCandidates([...candidates, ...newItems]);
   };
 
   const createEvent = async () => {
@@ -63,10 +97,8 @@ export default function Home() {
         candidates: candidates.map((c, i) => ({ id: i, label: c })),
         created_at: serverTimestamp(),
       });
-      // 履歴に追加
       const newHistory = [{ id: docRef.id, title, visitedAt: Date.now() }, ...history];
       localStorage.setItem("chousei_history", JSON.stringify(newHistory));
-      
       router.push(`/events/${docRef.id}`);
     } catch (e) {
       console.error("Error:", e);
@@ -136,31 +168,93 @@ export default function Home() {
           <div>
             <label className="block text-cyan-500 font-black mb-4 text-xs uppercase tracking-widest pl-1">Candidates / 候補日程</label>
             
-            <div className="flex flex-col sm:flex-row gap-0 mb-4">
-              <input
-                type="date"
-                className="flex-1 bg-[#222] text-white border-2 border-white p-4 outline-none focus:border-cyan-500 transition-colors"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-              />
-              <select
-                className="w-full sm:w-32 bg-[#222] text-white border-2 border-l-0 sm:border-l-0 border-t-0 sm:border-t-2 border-white p-4 outline-none focus:border-cyan-500 transition-colors"
-                value={selectedTime}
-                onChange={(e) => setSelectedTime(e.target.value)}
+            {/* モード切り替えタブ */}
+            <div className="flex mb-4 gap-2">
+              <button 
+                onClick={() => setAddMode("single")}
+                className={`flex-1 py-2 text-xs font-black uppercase tracking-widest transition border ${addMode === "single" ? "bg-cyan-600 text-black border-cyan-600" : "bg-black text-slate-500 border-slate-700 hover:border-slate-500"}`}
               >
-                {timeOptions.map((time) => (
-                  <option key={time} value={time}>{time}〜</option>
-                ))}
-              </select>
-              <button
-                onClick={addCandidate}
-                disabled={!selectedDate}
-                className="bg-cyan-600 text-black font-black px-8 py-4 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 transition-all uppercase tracking-widest border-2 border-cyan-600"
+                Single Date (単発)
+              </button>
+              <button 
+                onClick={() => setAddMode("range")}
+                className={`flex-1 py-2 text-xs font-black uppercase tracking-widest transition border ${addMode === "range" ? "bg-cyan-600 text-black border-cyan-600" : "bg-black text-slate-500 border-slate-700 hover:border-slate-500"}`}
               >
-                ADD
+                Date Range (期間一括)
               </button>
             </div>
 
+            {/* 追加フォームエリア */}
+            <div className="bg-[#111] border border-white p-4 mb-4">
+              
+              {/* 時間選択 (共通) */}
+              <div className="mb-4">
+                <label className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1 block">Time / 時間 (固定)</label>
+                <select
+                  className="w-full bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500"
+                  value={selectedTime}
+                  onChange={(e) => setSelectedTime(e.target.value)}
+                >
+                  {timeOptions.map((time) => (
+                    <option key={time} value={time}>{time}〜</option>
+                  ))}
+                </select>
+              </div>
+
+              {addMode === "single" ? (
+                // 単発モード
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    // ↓ ここに [color-scheme:dark] を指定してカレンダーアイコンを白くしています
+                    className="flex-1 bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500 [color-scheme:dark]"
+                    value={singleDate}
+                    onChange={(e) => setSingleDate(e.target.value)}
+                  />
+                  <button
+                    onClick={addSingleCandidate}
+                    disabled={!singleDate}
+                    className="bg-cyan-600 text-black font-black px-6 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 uppercase"
+                  >
+                    ADD
+                  </button>
+                </div>
+              ) : (
+                // 期間モード
+                <div className="flex flex-col gap-2">
+                   <div className="flex gap-2 items-center">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-400 uppercase font-bold">Start</label>
+                      <input
+                        type="date"
+                        className="w-full bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500 [color-scheme:dark]"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </div>
+                    <span className="text-white pt-4">～</span>
+                    <div className="flex-1">
+                      <label className="text-[10px] text-slate-400 uppercase font-bold">End</label>
+                      <input
+                        type="date"
+                        className="w-full bg-[#000] text-white border border-slate-600 p-3 outline-none focus:border-cyan-500 [color-scheme:dark]"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                   </div>
+                   <button
+                    onClick={addRangeCandidates}
+                    disabled={!startDate || !endDate}
+                    className="w-full bg-cyan-600 text-black font-black py-3 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 uppercase mt-2"
+                  >
+                    ADD ALL DATES
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 追加済みリスト */}
             {candidates.length > 0 ? (
               <div className="border border-white bg-[#0A0A0A]">
                 {candidates.map((c, index) => (
@@ -191,7 +285,7 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 最近見たイベント (History) */}
+        {/* 最近見たイベント */}
         {history.length > 0 && (
           <div className="mt-24 border-t border-slate-800 pt-12">
              <h2 className="text-slate-500 font-black text-xs uppercase tracking-widest mb-6">RECENT EVENTS / 最近見たイベント</h2>
