@@ -27,7 +27,7 @@ type Participant = {
   name: string; 
   comment: string; 
   answers: { [key: number]: string }; 
-  hasPaid?: boolean; // 支払いフラグ
+  hasPaid?: boolean;
   created_at?: any;
 };
 
@@ -62,7 +62,7 @@ export default function EventPage() {
 
   // UI制御
   const [isUrlCopied, setIsUrlCopied] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false); // 編集モード
+  const [isEditMode, setIsEditMode] = useState(false);
 
   // 日程追加用
   const [editDate, setEditDate] = useState("");
@@ -79,7 +79,6 @@ export default function EventPage() {
   useEffect(() => {
     if (!id) return;
 
-    // ブラウザID生成（チャットの本人判定用）
     let myId = localStorage.getItem("chousei_browser_id");
     if (!myId) {
       myId = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -87,20 +86,11 @@ export default function EventPage() {
     }
     setBrowserId(myId);
 
-    // ★以前入力した名前があれば復元する（修正ポイント）
-    const savedName = localStorage.getItem("chousei_user_name");
-    if (savedName) {
-      setName(savedName);
-      setChatName(savedName);
-    }
-
-    // 1. イベント情報の取得
     const unsubEvent = onSnapshot(doc(db, "events", id), (d) => { 
         if (d.exists()) {
             const data = d.data() as EventData;
             setEvent(data);
             
-            // 履歴保存
             const stored = localStorage.getItem("chousei_history");
             let history: HistoryItem[] = stored ? JSON.parse(stored) : [];
             history = history.filter(h => h.id !== id);
@@ -109,13 +99,11 @@ export default function EventPage() {
         }
     });
 
-    // 2. 参加者の取得
     const qParticipants = query(collection(db, "events", id, "participants"), orderBy("created_at", "asc"));
     const unsubParticipants = onSnapshot(qParticipants, (s) => {
       setParticipants(s.docs.map(d => ({ id: d.id, ...d.data() })) as Participant[]);
     });
 
-    // 3. チャットの取得
     const qMessages = query(collection(db, "events", id, "messages"), orderBy("createdAt", "asc"));
     const unsubMessages = onSnapshot(qMessages, (s) => {
       setMessages(s.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
@@ -125,23 +113,16 @@ export default function EventPage() {
   }, [id]);
 
   // --- ロジック ---
-
-  // 最適な日程の算出 (◎=2点, △=1点)
   const bestIds = (() => {
     if (!event || participants.length === 0) return [];
     const scores: { [key: number]: number } = {};
-    
-    // 初期化
     event.candidates.forEach((c) => { scores[c.id] = 0; });
-    
-    // 集計
     participants.forEach((p) => { 
       event.candidates.forEach((c) => {
         if (p.answers[c.id] === "o") scores[c.id] += 2;
         if (p.answers[c.id] === "t") scores[c.id] += 1;
       });
     });
-
     const maxScore = Math.max(...Object.values(scores));
     return maxScore === 0 ? [] : event.candidates.filter((c) => scores[c.id] === maxScore).map((c) => c.id);
   })();
@@ -159,7 +140,6 @@ export default function EventPage() {
     setMyAnswers(newAnswers); 
   };
 
-  // --- 編集機能 (日程追加・削除・支払い) ---
   const addCandidate = async () => { 
     if (!editDate || !event) return; 
     const dateObj = new Date(editDate); 
@@ -175,7 +155,7 @@ export default function EventPage() {
       });
       setEditDate("");
     } catch (e) {
-      alert("更新エラー: 権限を確認してください");
+      alert("更新エラー");
     }
   };
 
@@ -190,21 +170,18 @@ export default function EventPage() {
     }
   };
 
-  // 支払いステータスの切り替え
   const togglePayment = async (pid: string, currentStatus: boolean = false) => { 
     if (!confirm(currentStatus ? "「未払い」に戻しますか？" : "「支払い済み」にしますか？")) return;
     try { 
       await updateDoc(doc(db, "events", id, "participants", pid), { hasPaid: !currentStatus }); 
     } catch (e) { 
-      alert("更新失敗: 権限などを確認してください"); 
+      alert("更新失敗"); 
     } 
   };
 
-  // 参加登録
   const submitAnswer = async () => {
     if (!name) return alert("名前を入力してください");
     if (event && Object.keys(myAnswers).length < event.candidates.length) return alert("全ての日程に回答してください");
-    
     setIsSubmitting(true);
     try { 
       await addDoc(collection(db, "events", id, "participants"), { 
@@ -214,48 +191,28 @@ export default function EventPage() {
         hasPaid: false, 
         created_at: serverTimestamp(), 
       }); 
-      
-      // ★送信成功時に名前を保存して、チャット欄にも反映（修正ポイント）
-      localStorage.setItem("chousei_user_name", name);
-      setChatName(name);
-
-      setName(""); 
-      setComment(""); 
-      setMyAnswers({}); 
+      setName(""); setComment(""); setMyAnswers({}); setChatName(name);
       alert("登録しました！"); 
     } catch (e: any) { 
-      console.error(e);
       alert("送信エラー: " + e.message); 
     } finally { 
       setIsSubmitting(false); 
     }
   };
 
-  // チャット送信（大幅修正済み）
   const sendMessage = async () => { 
     if (!chatText) return;
-
-    // ★修正: チャット欄の名前が空なら、メインの名前欄を使う
-    const sender = chatName || name;
-
-    if (!sender) return alert("名前を入力してください");
+    if (!chatName) return alert("チャット用の名前を入力してください");
 
     try { 
       await addDoc(collection(db, "events", id, "messages"), { 
         text: chatText, 
-        senderName: sender, 
+        senderName: chatName, 
         senderId: browserId, 
         createdAt: serverTimestamp() 
       }); 
-      
       setChatText(""); 
-      
-      // ★追加: 名前を保存して次回入力を楽にする
-      setChatName(sender);
-      localStorage.setItem("chousei_user_name", sender);
-
     } catch (e: any) {
-      console.error(e);
       alert("チャット送信エラー: " + e.message);
     } 
   };
@@ -303,7 +260,7 @@ export default function EventPage() {
               </div>
             </div>
 
-            {/* 編集モードフォーム (日程追加) */}
+            {/* 編集モードフォーム */}
             {isEditMode && (
               <div className="bg-[#150a05] border border-orange-900/50 p-6 animate-fadeIn">
                 <p className="text-orange-500 font-bold text-xs uppercase tracking-widest mb-4">ADD NEW DATE / 日程追加</p>
@@ -347,7 +304,6 @@ export default function EventPage() {
                       <td className="p-4 font-bold text-white sticky left-0 z-10 bg-[#0A0A0A] border-r border-white truncate max-w-[160px]">
                         <div className="flex items-center justify-between gap-2">
                           <span>{p.name}</span>
-                          {/* 編集モード時の集金ボタン */}
                           {isEditMode && (
                             <button 
                               onClick={() => togglePayment(p.id, p.hasPaid)}
@@ -391,7 +347,6 @@ export default function EventPage() {
                 
                 <div>
                   <label className="block text-cyan-500 text-[10px] font-black uppercase tracking-widest mb-2">Select / 一括選択</label>
-                  <p className="text-slate-500 text-[10px] mb-2">ボタンを押すと全日程を一括設定できます</p>
                   <div className="flex gap-0 border-2 border-white">
                     <button onClick={() => setAllAnswers("o")} className="flex-1 bg-[#111] text-cyan-400 py-3 text-xs font-black hover:bg-cyan-900/20 transition border-r border-white">ALL ◎</button>
                     <button onClick={() => setAllAnswers("t")} className="flex-1 bg-[#111] text-yellow-400 py-3 text-xs font-black hover:bg-yellow-900/20 transition border-r border-white">ALL △</button>
@@ -424,7 +379,7 @@ export default function EventPage() {
             </div>
 
             {/* チャット */}
-            <div className="bg-[#111] p-8 border border-white flex flex-col h-[500px]">
+            <div className="bg-[#111] p-8 border border-white flex flex-col h-[600px]">
               <h2 className="text-pink-500 font-black text-xl mb-1 uppercase tracking-wider">Board</h2>
               <p className="text-slate-500 text-xs mb-6 font-bold">連絡事項や挨拶はこちらへ</p>
               
@@ -442,11 +397,38 @@ export default function EventPage() {
                   );
                 })}
               </div>
-              <div className="flex gap-2 pt-4 border-t border-white">
-                <input type="text" placeholder="NAME" className="w-1/3 bg-[#000] border border-white p-3 text-xs text-white focus:border-pink-500 outline-none" value={chatName} onChange={(e) => setChatName(e.target.value)} />
-                <input type="text" placeholder="MESSAGE..." className="flex-1 bg-[#000] border border-white p-3 text-xs text-white focus:border-pink-500 outline-none" value={chatText} onChange={(e) => setChatText(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} />
-                <button onClick={sendMessage} className="bg-pink-600 text-black px-5 font-bold hover:bg-pink-500 transition uppercase text-xs tracking-widest border border-white">SEND</button>
+
+              {/* チャット入力エリア (修正版) */}
+              <div className="pt-6 border-t border-white space-y-4">
+                <div>
+                   <label className="block text-pink-500 text-[10px] font-black uppercase tracking-widest mb-2">Chat Name / お名前</label>
+                   <input 
+                     type="text" 
+                     placeholder="名前を入力" 
+                     className="w-full bg-[#000] border border-white p-3 text-sm text-white focus:border-pink-500 outline-none placeholder-slate-600 transition-colors" 
+                     value={chatName} 
+                     onChange={(e) => setChatName(e.target.value)} 
+                   />
+                </div>
+                
+                <div className="flex gap-0 border border-white">
+                  <input 
+                    type="text" 
+                    placeholder="メッセージを入力..." 
+                    className="flex-1 bg-[#000] p-4 text-sm text-white outline-none placeholder-slate-600" 
+                    value={chatText} 
+                    onChange={(e) => setChatText(e.target.value)} 
+                    onKeyDown={(e)=>e.key==="Enter"&&sendMessage()} 
+                  />
+                  <button 
+                    onClick={sendMessage} 
+                    className="bg-pink-600 text-black px-6 font-black hover:bg-pink-500 transition uppercase text-xs tracking-widest border-l border-white"
+                  >
+                    SEND
+                  </button>
+                </div>
               </div>
+
             </div>
 
           </div>
